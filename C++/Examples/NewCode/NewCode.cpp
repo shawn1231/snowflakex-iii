@@ -1,4 +1,3 @@
-#include <iomanip>
 // custom function includes
 #include "Navio/ScaleVars.h" // functions for re-scaling a value within a specified output range
 // log file includes
@@ -9,6 +8,7 @@
 #include <sys/time.h>
 #include <unistd.h>
 #include <iostream>
+#include <iomanip> // used to force GPS data to output with correct precision
 // Navio2 includes
 // barometer includes
 #include "Navio/MS5611.h"
@@ -29,9 +29,6 @@
 #include "Navio/Ublox.h"
 
 using namespace std;
-
-#define DECLINATION 12.71
-#define WRAP_THRESHOLD 160.00
 
 //---------------------------------------------------------------------------------------------------User Configurable Parameters
 const bool dbmsg_global = false; // set flag to display all debug messages
@@ -87,7 +84,10 @@ double kp_start = .07937;
 double ki_start = .05591;
 double kd_start = .02814;
 
-// Control Validation Program - Run 2, OK Gains //double kp_start = .2686; //double ki_start = .1143; //double kd_start = .1086;
+// Control Validation Program - Run 2, OK Gains
+//double kp_start = .2686;
+//double ki_start = .1143;
+//double kd_start = .1086;
 
 // Control Validation Program - Run 3, Vigorous Gains
 //double kp_start = .314;
@@ -143,6 +143,8 @@ const float output_range[6][2] = {{-.05,.30},{2,-2},{-.185,.500},{-180,180},{-.1
 float coefficients[6][2];
 
 //---------------------------------------------------------------------------------------------------------------IMU Declarations
+#define DECLINATION 12.71 //magnetic declination for camp roberts
+#define WRAP_THRESHOLD 160.00 // wrap threshold for wrap counter (yaw is +/-180, need to make it continuous
 // vars to hold mpu values
 float a_mpu[3] , a_mpu_ahrs[3];
 float g_mpu[3] , g_mpu_ahrs[3];
@@ -201,11 +203,11 @@ double alt_ellipsoid = 0;
 double msl_gps = 10000;
 double horz_accuracy = 0;
 double vert_accuracy = 0;
-int status_gps = 0x00; // default condition - no fix 
+int status_gps = 0x00; // default condition - no fix
 string status_gps_string = "no fix";
 
 //----------------------------------------------------------------------------------------------------------Waypoint Declarations
-double waypoints[50][3];
+double waypoints[50][3]; // waypoint array is 50x3
 double target[2] = {35.7178528,-120.76411}; // from step input payload drop
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
@@ -224,40 +226,42 @@ bool file_exists(string name_of_file){
 int main( int argc , char *argv[])
 {
 	//----------------------------------------------------------------------------------------------------------------File Title Prefix
-	double kp = kp_start*.0175; // convert to radians
+	double kp = kp_start*.0175; // convert all 3 to radians
 	double ki = ki_start*.0175;
 	double kd = kd_start*.0175;
 	float ki_ndi = ki_ndi_start*.0175; // convert to radians
 	int multisine_counter = 0;
-	int parameter;
-	char *logfile_prefix;
-	string logfile_prefix_string;
-	logfile_prefix_string = file_location;
-	string logfile_prefix_fromfile;
+	int parameter; // parameter is the argument passed in with the program call, create it here
+	char *logfile_prefix; // pointer to a character array which will contain the log_file prefix when using the -d parameter
+	string logfile_prefix_string; // previous variable will be converted to a string before using it to make a file
+	logfile_prefix_string = file_location; // used to store the path
+	string logfile_prefix_fromfile; // used to store the prefix when using the -f parameter
 	ifstream ifs; // create a new file stream object, this will be reused for each file we need to read
-	while((parameter = getopt(argc,argv, "hfd:")) != -1){
-		switch(parameter){
-			case 'h' :
+	while((parameter = getopt(argc,argv, "hfd:")) != -1){ // read in the program options
+		switch(parameter){ // switch on the character after the dash example:  sudo ./NewCode -d <filename>"
+			case 'h' : // h parameter calls the help message
 				cout << "Use option \"-d <FilePrefix>\" to insert a prefix into the filename" << endl;
 				cout << "Use option \"-f\" to read configuration from file (configuration.csv)" << endl;
-				return EXIT_FAILURE;
+				return EXIT_FAILURE; // do not continue executing after displaying the help message
 				break;
-			case 'f' :
+			case 'f' : // f parameter reads important variables from a configutation.txt file
 				cout << "Reading user configuration from file" << endl;
-				ifs.open("configuration.txt");
-				ifs >> control_type;
-				cout << "Control type: " << control_type << endl;
-				ifs >> heading_type;
-				cout << "Heading type: " << heading_type << endl;
-				ifs >> user_heading;
-				cout << "User heading: " << user_heading << " degrees" << endl;
+				ifs.open("configuration.txt"); // open the configuration file
+				ifs >> control_type; // read in the control type (character)
+				cout << "Control type: " << control_type << endl; // echo to console
+				ifs >> heading_type; // read in the heading type (character)
+				cout << "Heading type: " << heading_type << endl; // echo to console
+				ifs >> user_heading; // read in the heading (number), only used for user heading
+				cout << "User heading: " << user_heading << " degrees" << endl; // echo to the console
 				getline(ifs,logfile_prefix_fromfile); // this is a hack to get to the next line
-				getline(ifs,logfile_prefix_fromfile);
-				logfile_prefix_string = file_location+logfile_prefix_fromfile+'_';
-				cout << "Logfile prefix: " << logfile_prefix_fromfile << endl;
+				getline(ifs,logfile_prefix_fromfile); // read in the prefix from the configuration file
+				logfile_prefix_string = file_location+logfile_prefix_fromfile+'_'; // stick an underscore after the file prefix
+				cout << "Logfile prefix: " << logfile_prefix_fromfile << endl; // echo to the console
 				ifs.close(); // close the file
 				break;
+			// this option reads in a prefix from the program call and uses the defaults for everything else
 			case 'd' : logfile_prefix = optarg; logfile_prefix_string = file_location+string(logfile_prefix)+'_'; break;
+			// stop execution if option flag is invalid
 			case '?' : cout << "Invalid option.  Use -h for help" << endl; return EXIT_FAILURE;}}
 
 
@@ -292,6 +296,7 @@ int main( int argc , char *argv[])
 	cout << "Cannot read MPU offsets, using defaults" << endl;} // print that the file could not be read, this is not a fatal error
 	ifs.close(); // close the current file to prepare for the next file read operation
 
+// ---not going to duplicate comments, this next section is just the same as above except for a different sensor
 	ifs.open("/home/pi/Navio2/C++/Examples/NewCode/lsm_mag_cal.csv");
 	if(ifs){
 		cout << "LSM9DS1 offsets:" << endl;
@@ -318,11 +323,13 @@ int main( int argc , char *argv[])
 		cout << "Cannot read LSM offsets, using defaults";}
 	ifs.close();
 
+	// propogate the waypoints matrix with 0's, the value 0 will be used to mark the end of valid data
 	for(int i = 0 ; i < 50 ; i++ ){
 		for(int j = 0 ; j < 3 ; j++){
 			//cout << "we made it to here" << endl;
 			waypoints[i][j] = 0;}} // fill with zeros, this will mark the EOF
 
+	// read in the waypoints file
 	ifs.open("/home/pi/Navio2/C++/Examples/NewCode/waypoints.csv");
 	if(ifs){
 		cout << "Reading waypoints from file............" << endl;
@@ -335,11 +342,8 @@ int main( int argc , char *argv[])
 					char delim;
 					ifs >> delim;}
 				ifs >> waypoints[i][j];
-//				if(waypoints[i][0] != 0){
-//					cout << waypoints[i][j];
 				}
-//			if((i < 49) && (waypoints[i][0] != 0)){
-//				cout << endl;
+
 			}
 		for(int i = 0 ; i < 50 ; i++){
 			for(int j = 0 ; j < 3 ; j++){
@@ -354,6 +358,7 @@ int main( int argc , char *argv[])
 		cout << "Could not read waypoints" << endl;
 		if(heading_type = 'n'){
 			cout << "Halting execution, cannot navigate without waypoints" << endl;
+			// end execution if a navigation heading is being used but there are not waypoints
 			return EXIT_FAILURE;}
 	}
 
@@ -361,24 +366,25 @@ int main( int argc , char *argv[])
 
 	//-------------------------------------------------------------------------------------------Loop timing (scheduler) Initialization
 	// initialize the time variables
-	gettimeofday(&time_obj, NULL);
-	tse          = time_obj.tv_sec*1000000LL + time_obj.tv_usec; // time since epoch (us)
+	gettimeofday(&time_obj, NULL); // standard unix function to get the current time since epoch
+	tse          = time_obj.tv_sec*1000000LL + time_obj.tv_usec; // time since epoch (converted to microseconds)
 	time_start = tse; // time since epoch (ms), will be used to calculate time since start (beginning at 0us)
 
 	// declare the scheduler frequencies
 	cout << endl;
 	cout << "Establishing loop frequencies.........." << endl;
+	// 8-4-2017 changed all timer related variables to long long, timer variable (int) was overflowing and causing erratic timing
+	// if code had been running for ~35 minutes, tested after fixing and overflow is no longer occuring after 35 minutes
 	const float frequency [NUM_LOOPS] = {300,1000,1,100,50,20,10,.33,1}; //Hz
-	unsigned long long duration [NUM_LOOPS]; // will store the expected time since last execution for a given loop
-	unsigned long long timer [NUM_LOOPS]; // will store the time since the last execution in a given loop
-	unsigned long long watcher [NUM_LOOPS]; // will be used for debugging
+	unsigned long long duration [NUM_LOOPS]; // stores the expected time since last execution for a given loop
+	unsigned long long timer [NUM_LOOPS]; // stores the time since the last execution in a given loop
+	unsigned long long watcher [NUM_LOOPS]; // used for monitoring actual timer loop durations
 
 	// calculate the scheduler us delay durations and populate the timer array with zeros
 	cout << "Calculating loop delay durations......." << endl;
 	cout << "Populating loop timers................." << endl;
-	for(int i = 0 ; i < NUM_LOOPS ; i++){
+	for(int i = 0 ; i < NUM_LOOPS ; i++){ // populate the durations using the passed values for frequency, echo everything to the console
 		duration[i] = 1000000/frequency[i];
-		//duration[i] = 1000/frequency[i];
 		if(dbmsg_global || dbmsg_local){cout << "Frequency is " << frequency[i] << "(Hz), duration is " << duration[i] << "(us)"<< endl;}
 		timer[i] = 0;
 		if(dbmsg_global || dbmsg_local){cout << "Timer is set to " << timer[i] << "(us), should all be zero" << endl;}
@@ -397,9 +403,11 @@ int main( int argc , char *argv[])
 	cout << "Currently using " << rcinput.channel_count << " channels............." << endl;
 	cout << " --RC Input successfully initialized-- " << endl;
 	cout << "Creating RC Input range coefficients   " << endl;
-	for(int i = 0 ; i < rcinput.channel_count ; i++){
-		coefficients[i][0] = calculate_slope(input_range,output_range[i]);
-		coefficients[i][1] = calculate_intercept(input_range,output_range[i],coefficients[i][0]);
+	for(int i = 0 ; i < rcinput.channel_count ; i++){ // using a custom class for converting bounded values to values in a new range
+		// in the Python version of this function, both parameters are returned by one function
+		// since multiple values may not be returned by a single function this version uses a function for each scaling parameter
+		coefficients[i][0] = calculate_slope(input_range,output_range[i]); // first call the slope calculator
+		coefficients[i][1] = calculate_intercept(input_range,output_range[i],coefficients[i][0]); // next calculate the intercept
 	}
 	cout << "Successfully created range coefficients" << endl;
 
@@ -414,11 +422,13 @@ int main( int argc , char *argv[])
 	lsm->initialize();
 	cout << " --LSM9DS1 successfully initialized--" << endl;
 	cout << "Populating IMU sensor arrays..........." << endl;
-	for(int i = 0; i < 3 ; i++){
+	for(int i = 0; i < 3 ; i++){ // seed everything with a value of 0
 		a_mpu[i]=g_mpu[i]=m_mpu[i]=a_lsm[i]=g_lsm[i]=m_lsm[i] = 0.0;}
 	//-------------------------------------------------------------------------------------------------------------Servo Initialization
 	cout << "Initializing PWM Output................" << endl;
 	PWM pwm_out;
+	// create pwm output object and initialize right and left winch servos, stop execution if servos cannot be initialized
+	// NOTE!!! if the code is erroring out here, the first thing to check is to make sure that you are are running the code with sudo
 	if(!pwm_out.init(WINCH_RIGHT)){ // right hand side winch servo
 		cout << "Cannot Initialize East Side Winch Servo" << endl;
 		cout << "Make sure you are root" << endl;
@@ -446,11 +456,14 @@ int main( int argc , char *argv[])
 	//-------------------------------------------------------------------------------------------------------------AHRS Initialization
 	cout << "Initializing gyroscope................." << endl;
 	cout << "Reading gyroscope offsets.............." << endl;
+	// gyroscope offsets generated by sampling the gyroscope 100 times when the program executes, averaging the 100 samples
+	// and then subtracting off the newly acquired offset values evertime the gyro is read later on in the code
 	for(int i = 0 ; i < 100 ; i++){
-		mpu->update();
-		mpu->read_gyroscope(&g_mpu[0],&g_mpu[1],&g_mpu[2]);
-		lsm->update();
-		lsm->read_gyroscope(&g_lsm[0],&g_lsm[1],&g_lsm[2]);
+		// read both sensors, we are only concerned with gyroscope information right now
+		mpu->update(); // update the mpu sensor
+		mpu->read_gyroscope(&g_mpu[0],&g_mpu[1],&g_mpu[2]); // read the updated info
+		lsm->update(); // update the lsm sensor
+		lsm->read_gyroscope(&g_lsm[0],&g_lsm[1],&g_lsm[2]); // read the updated info
 		//read 100 samples from each gyroscope axis on each sensor
 		g_mpu[0] *= 180/PI;
 		g_mpu[1] *= 180/PI;
@@ -477,26 +490,30 @@ int main( int argc , char *argv[])
 	offset_lsm[1]/=100.0;
 	offset_lsm[2]/=100.0;
 	cout << "Setting gyroscope offsets.............." << endl;
-	//for(int i = 0; i < 3; i++){
-		//cout << "mpu " << offset_mpu[i] << "\t" << "lsm " <<  offset_lsm[i] << endl;}
+	// finally write the acquired offsets to the ahrs objects which have a member function which automatically handles
+	// the application of offsets at each update/read cycle
 	ahrs_mpu_mahony.setGyroOffset(offset_mpu[0],offset_mpu[1],offset_mpu[2]);
 	ahrs_lsm_mahony.setGyroOffset(offset_lsm[0],offset_lsm[1],offset_lsm[2]);
 	ahrs_mpu_madgwick.setGyroOffset(offset_mpu[0],offset_mpu[1],offset_mpu[2]);
 	ahrs_lsm_madgwick.setGyroOffset(offset_lsm[0],offset_lsm[1],offset_lsm[2]);
 	cout << " --Gyroscope offsets stored in AHRS--  " << endl;
+	cout << "Setting magnetometer calibration......." << endl;
 	ahrs_mpu_mahony.setMagCalibration(mag_offset_mpu,mag_rotation_mpu);
 	ahrs_lsm_mahony.setMagCalibration(mag_offset_lsm,mag_rotation_lsm);
 	ahrs_mpu_madgwick.setMagCalibration(mag_offset_mpu,mag_rotation_mpu);
 	ahrs_lsm_madgwick.setMagCalibration(mag_offset_lsm,mag_rotation_lsm);
+	cout << "--Magnetometer offsets stored in AHRS--" << endl;
+	cout << "-Magnetometer rotations stored in AHRS-" << endl;
 
 	//---------------------------------------------------------------------------------------------------------------GPS Initialization
-	vector<double> pos_data;
-	int wind_level_index = 0;
+	vector<double> pos_data; // this vector will contain undecoded gps information
+	int wind_level_index = 0; // this is the counter for the current altitude level used in the navigation algorithm
 	Ublox gps;
 	cout << "Initializing GPS......................." << endl;
 	if(!gps.testConnection()){ // check if the gps is working
 		cout << "    --ERROR, GPS not initialized--    " << endl;
 		if(heading_type == 'n'){
+			// stop program executiong if gps won't initialize and navigation heading type is selected
 			cout << "Fatal exception, navigation impossible" << endl;
 			cout << "without GPS, try restarting..........." << endl;
 			return EXIT_FAILURE;}}
@@ -518,10 +535,10 @@ int main( int argc , char *argv[])
 	//----------------------------------------------------------------------------------------------------------Log File Initialization
 	while(true)
 	{
-		int standby_message_timer = 0;
+		int standby_message_timer = 0; // used to limit the frequency of the standby message
 		while(!((rc_array[5]>1500)&&(adc_array[4]<4000))){
-		//bool temp_flag = false;
-		//while(!temp_flag){
+//bool temp_flag = false; // uncomment for testing with no transmitter
+//while(!temp_flag){ // uncomment for testing with no transmitter
 			if(standby_message_timer > 250){
 				cout << endl << "---------------------------------------" << endl << "           Autopilot Inactive         " << endl;
 				cout << "  Dynamic Lines at Neutral Deflection " << endl;
@@ -530,18 +547,21 @@ int main( int argc , char *argv[])
 			// when the autopilot is inactive, set both winches to the neutral deflection
 			pwm_out.set_duty_cycle(WINCH_RIGHT, LINE_NEUTRAL);
 			pwm_out.set_duty_cycle(WINCH_LEFT, LINE_NEUTRAL);
+			// since this loop executes based on an rc and an adc condition, we have to poll these devices for new status
 			rc_array[5] = rcinput.read(5);
 			adc_array[4] = adc.read(4);
+			// step counter needs to be set to zero also, this is a hack because the numbering is messed up in the code
+			// we start at negative one here and presumably the counter is incremented before 1st execution
 			step_counter = -1;
 			usleep(5000);
-			standby_message_timer++;
+			standby_message_timer++; // increment the message delay timer
 			// everything that needs to be set to zero by the killswitch goes here
-			multisine_counter = 0;
-			yaw_mpu_integrated = 0;
+			multisine_counter = 0; // time counter for the multisine input
+			yaw_mpu_integrated = 0; // integrated yaw
 			yaw_mpu_integrated_previous = 0;
 			yaw_lsm_integrated = 0;
 			yaw_lsm_integrated_previous = 0;
-			wind_level_index = 0;
+			wind_level_index = 0; // wind level for navigation, can only be incremented by the main loop to avoid "waypoint indecision"
 			for(int i = 0 ; i < 3 ; i++){
 				gyro_z_lsm_old[i] = 0;
 				gyro_z_mpu_old[i] = 0;
@@ -549,7 +569,7 @@ int main( int argc , char *argv[])
 			yaw_error_sum       = 0; // prevent integral wind up
 			yaw_error           = 0;
 			yaw_error_previous  = 0;
-//			temp_flag = true;
+//temp_flag = true; // uncomment for testing with no transmitter
 
 		}
 		time_t result = time(NULL);
@@ -632,46 +652,16 @@ int main( int argc , char *argv[])
 		yaw_prev = 0;
 
 	while((rc_array[5]>1500)&&(adc_array[4]<4000))
-//	while(true)
+//while(true)
 	{
 		// refresh time now to prepare for another loop execution
 		gettimeofday(&time_obj, NULL); // must first update the time_obj
 		tse        = time_obj.tv_sec*1000000LL + time_obj.tv_usec; // update tse (us)
-//		tse        = tse + 2000000000;
+		//tse        = tse + 2000000000; // uncomment to test integer overflow fix
 		time_now   = tse - time_start; // calculate the time since execution start by subtracting off tse
-
-//		cout << tse << " - " << time_start << " = " << time_now << endl;
-
-/*
-			//unsigned long clock_start = clock();
-            //if(gps.decodeMessages(Ublox::NAV_POSLLH, pos_data) == 1))
-		if (gps.decodeSingleMessage(Ublox::NAV_POSLLH, pos_data) == 1)
-		{
-                // after desired message is successfully decoded, we can use the information stored in pos_data vector
-                // right here, or we can do something with it from inside decodeSingleMessage() function(see ublox.h).
-                // the way, data is stored in pos_data vector is specified in decodeMessage() function of class UBXParser(see ublox.h)
-                time_gps = pos_data[0]/1000.00000;
-                lng = pos_data[1]/10000000.00000;
-                lat = pos_data[2]/10000000.00000;
-                alt_ellipsoid = (pos_data[3]/1000.00000)*3.28;
-                msl_gps = (pos_data[4]/1000.00000)*3.28;
-		//msl_gps = 2500-step_counter*160;
-                horz_accuracy = (pos_data[5]/1000.00000)*3.28;
-                vert_accuracy = (pos_data[6]/1000.00000)*3.28;}
-*/
-//                time_gps = pos_data[0];
-//                lng = pos_data[1];
-//                lat = pos_data[2];
-//                alt_ellipsoid = (pos_data[3])*3.28;
-//                msl_gps = (pos_data[4])*3.28;
-		//msl_gps = 2500-step_counter*160;
-//                horz_accuracy = (pos_data[5])*3.28;
-//                vert_accuracy = (pos_data[6])*3.28;}
-
 
 		if( (time_now-timer[0]) > duration[0])
 		{
-
 			//----------------------------------------------------------------------------------------------------------------AHRS Update
 			dt = time_now-timer[0];
 			dt = dt/1000000.0; // convert from useconds
@@ -706,19 +696,20 @@ int main( int argc , char *argv[])
 			ahrs_lsm_mahony.updateMahony(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,m_lsm[0],m_lsm[1],m_lsm[2],dt);
 			ahrs_mpu_madgwick.updateMadgwick(a_mpu_ahrs[0],a_mpu_ahrs[1],a_mpu_ahrs[2],g_mpu_ahrs[0]*0.0175,g_mpu_ahrs[1]*0.0175,g_mpu_ahrs[2]*0.0175,m_mpu[0],m_mpu[1],m_mpu[2],dt);
 			ahrs_lsm_madgwick.updateMadgwick(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,m_lsm[0],m_lsm[1],m_lsm[2],dt);
+			//uncomment for non-global framed ahrs (no magnetometer)
 //			ahrs_mpu_mahony.updateMahonyIMU(a_mpu_ahrs[0],a_mpu_ahrs[1],a_mpu_ahrs[2],g_mpu_ahrs[0]*0.0175,g_mpu_ahrs[1]*0.0175,g_mpu_ahrs[2]*0.0175,dt);
 //			ahrs_lsm_mahony.updateMahonyIMU(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,dt);
 //			ahrs_mpu_madgwick.updateMadgwickIMU(a_mpu_ahrs[0],a_mpu_ahrs[1],a_mpu_ahrs[2],g_mpu_ahrs[0]*0.0175,g_mpu_ahrs[1]*0.0175,g_mpu_ahrs[2]*0.0175,dt);
 //			ahrs_lsm_madgwick.updateMadgwickIMU(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,dt);
 
-			//propogate the que holding the old gyro values
+			// update the que holding the old gyro values with the new gyro information
 			gyro_z_mpu_old[2] = gyro_z_mpu_old[1];
 			gyro_z_mpu_old[1] = gyro_z_mpu_old[0];
 			gyro_z_mpu_old[0] = g_mpu_ahrs[2]-offset_mpu[2];
 			gyro_z_lsm_old[2] = gyro_z_lsm_old[1];
 			gyro_z_lsm_old[1] = gyro_z_lsm_old[0];
 			gyro_z_lsm_old[0] = g_lsm_ahrs[2]-offset_lsm[2];
-
+			// update previous integrated yaw variables
 			yaw_mpu_integrated_previous = yaw_mpu_integrated;
 			yaw_lsm_integrated_previous = yaw_lsm_integrated;
 
@@ -732,36 +723,36 @@ int main( int argc , char *argv[])
 			timer[0] = time_now;
 		}
 
-			if( (time_now-timer[1]) > duration[1])
-			{
+		if( (time_now-timer[1]) > duration[1])
+		{
 			if (gps.decodeSingleMessage(Ublox::NAV_POSLLH, pos_data) == 1)
 			{
-		        // after desired message is successfully decoded, we can use the information stored in pos_data vector
-		        // right here, or we can do something with it from inside decodeSingleMessage() function(see ublox.h).
-	                // the way, data is stored in pos_data vector is specified in decodeMessage() function of class UBXParser(see ublox.h)
+				// examples provided with Navio2 have gps code which is designed to run in a threaded program, the gps update
+				// functions block execution, for this code, the functions have been modified, the gps is polled here at 1000hz
+				// but valid new data only comes through occasionally, the NAV_STATUS message has been disabled entireley because
+				// it was causing .75 second interruptions in the timer loop, in the future threading will be utilized for the
+				// gps (then the imu and ahrs may be added to separate threads as well)
 	                	time_gps = pos_data[0]/1000.00000;
 		       	        lng = pos_data[1]/10000000.00000;
         	       		lat = pos_data[2]/10000000.00000;
 	        	        alt_ellipsoid = (pos_data[3]/1000.00000)*3.28;
 		               	msl_gps = (pos_data[4]/1000.00000)*3.28;
-				//msl_gps = 2500-step_counter*160;
+				//msl_gps = 2500-step_counter*160; //uncomment to test navigation algorithm
         		        horz_accuracy = (pos_data[5]/1000.00000)*3.28;
-	                	vert_accuracy = (pos_data[6]/1000.00000)*3.28;}
+	                	vert_accuracy = (pos_data[6]/1000.00000)*3.28;
+			}
 			watcher[1] = time_now - timer[1]; // used to check loop frequency
 			timer[1] = time_now;
 			}
 
 		if( (time_now-timer[2]) > duration[2])
 		{
-
-
 			watcher[2] = time_now - timer[2]; // used to check loop frequency
 			timer[2] = time_now;
 		}
 
 		if( (time_now-timer[3]) > duration[3])
 		{
-
 			//-------------------------------------------------------------------------------------------------------------Barometer Read
 			if(baro_step == 0){
 				barometer.refreshPressure();}
@@ -773,7 +764,6 @@ int main( int argc , char *argv[])
 				barometer.readTemperature();}
 			else if(baro_step == 4){
 				barometer.calculatePressureAndTemperature();
-				//cout << "baro update complete, current time: " << time_now << "(us)" << endl; // full update every 0.04s
 				baro_step = -1;}
 			else{
 				cout << "improper barometer step, pressure may be incorrect" << endl;}
@@ -795,18 +785,19 @@ int main( int argc , char *argv[])
 				adc_array[i] = adc.read(i);}
 
 			//-----------------------------------------------------------------------------------------------------------------PWM Output
-		// these winch positions represent minimum line lengths (maximum deflection)
-			//winch_right_cmd = LINE_NEUTRAL+MAX_DEFLECTION;
-			//winch_left_cmd = LINE_NEUTRAL+MAX_DEFLECTION;
-		// these represent maximum line release (minimum line pull, minimum deflection)
-			//winch_right_cmd = LINE_NEUTRAL - MAX_DEFLECTION;
-			//winch_left_cmd = LINE_NEUTRAL - MAX_DEFLECTION;
-		// PWM neutral position
-			//winch_right_cmd = LINE_NEUTRAL;
-			//winch_left_cmd = LINE_NEUTRAL;
-		// RC control, both servos on roll stick
-			//winch_right_cmd = LINE_NEUTRAL + rc_array_scaled[0];
-			//winch_left_cmd  = LINE_NEUTRAL + rc_array_scaled[0];
+			// these are kept here for reference purposes only, the winch commands are further down inside this same loop now
+			// these winch positions represent minimum line lengths (maximum deflection)
+				//winch_right_cmd = LINE_NEUTRAL+MAX_DEFLECTION;
+				//winch_left_cmd = LINE_NEUTRAL+MAX_DEFLECTION;
+			// these represent maximum line release (minimum line pull, minimum deflection)
+				//winch_right_cmd = LINE_NEUTRAL - MAX_DEFLECTION;
+				//winch_left_cmd = LINE_NEUTRAL - MAX_DEFLECTION;
+			// PWM neutral position
+				//winch_right_cmd = LINE_NEUTRAL;
+				//winch_left_cmd = LINE_NEUTRAL;
+			// RC control, both servos on roll stick
+				//winch_right_cmd = LINE_NEUTRAL + rc_array_scaled[0];
+				//winch_left_cmd  = LINE_NEUTRAL + rc_array_scaled[0];
 
 			//------------------------------------------------------------------------------------------------AHRS Euler Angle Conversion
 			ahrs_mpu_mahony.getEuler(&roll_mpu_mahony,&pitch_mpu_mahony,&yaw_mpu_mahony);
@@ -818,6 +809,7 @@ int main( int argc , char *argv[])
 			float dt_control = time_now-timer[3]; // dt for this loop
 			dt_control = dt_control/1000000.0; // convert from useconds
 
+			// determine what type of heading we are going to used based on the configuration file (or default parameter in the code)
 			switch(heading_type){
 				case '1':
 					yaw_desired = 0; // North heading
@@ -841,7 +833,6 @@ int main( int argc , char *argv[])
 					break;
 				case 'c':
 					yaw_desired = rc_array_scaled[3]; // yaw stick
-//					string temp(rc_array_scaled[3]);
 					heading_type_message = "RC " + to_string(rc_array_scaled[3]);
 					yaw_desired = rc_array_scaled[3];
 					break;
@@ -886,6 +877,7 @@ int main( int argc , char *argv[])
 					yaw_desired = 0;
 					break;}
 
+			// make yaw continuous instead of +/-180 using a wrap counter
 			if(yaw_mpu_madgwick > WRAP_THRESHOLD && yaw_prev < - WRAP_THRESHOLD){
 				num_wraps--;
 			}
@@ -893,21 +885,20 @@ int main( int argc , char *argv[])
 				num_wraps++;
 			}
 
-
-
+			// account for magnetic declination
 			yaw_mpu_mahony = yaw_mpu_mahony + DECLINATION;
 			yaw_lsm_mahony = yaw_lsm_mahony + DECLINATION;
 			yaw_mpu_madgwick = yaw_mpu_madgwick + DECLINATION;
 			yaw_lsm_madgwick = yaw_lsm_madgwick + DECLINATION;
 
-
+			// calculate yaw error for controller
 			yaw_prev              = yaw_mpu_madgwick;
 			yaw_error_previous    = yaw_error;
 			yaw_error             = yaw_desired -(yaw_mpu_madgwick+360*num_wraps);
 			yaw_error_rate        = (yaw_error - yaw_error_previous)/dt_control;
 			yaw_error_sum         = (((yaw_error + yaw_error_previous)*dt_control)/2) + yaw_error_sum;
 
-
+			// saturate the yaw error sum as a reasonable value
 			if(yaw_error_sum > 150){
 				yaw_error_sum = 150;
 			} if(yaw_error_sum < -150){
@@ -917,6 +908,7 @@ int main( int argc , char *argv[])
 			// hack to avoid changing the variable name "t" in the multisine
 			float t = time_now*1e-6;
 
+			// gains are modified live according to rc transmitter stick positions
 			if(live_gains){
 				kp    =  (kp_start+rc_array_scaled[2])*(.0175);
 				ki    =  (ki_start+rc_array_scaled[3])*(.0175);
@@ -932,6 +924,7 @@ int main( int argc , char *argv[])
 				zeta = zeta_start;
 				ki_ndi = ki_ndi_start;}
 
+			// control type is determined by configuration parameter from file (or default in code)
 			switch(control_type){
 				case 'p':
 					control_type_message = "PID";
@@ -1008,6 +1001,7 @@ int main( int argc , char *argv[])
 					winch_left_cmd  = LINE_NEUTRAL;
 					break;}
 
+			// this is kept here for reference only
 			// These are the correct directions in which to apply the offsets for line pull (glide)
 			//cout << "Default active" << endl;
 			//winch_right_cmd = LINE_NEUTRAL-LINE_OFFSET;
@@ -1074,15 +1068,18 @@ int main( int argc , char *argv[])
 
 
 		if( (time_now-timer[5]) > duration[5]){
+			// unused timer loop
 			watcher[5] = time_now - timer[5]; // used to check loop frequency
 			timer[5] = time_now;}
-		if( (time_now-timer[6]) > duration[6]){
 
+		if( (time_now-timer[6]) > duration[6]){
+			// unused timer loop
 			watcher[6] = time_now - timer[6]; // used to check loop frequency
 			timer[6] = time_now;}
 
 		if( (time_now-timer[7]) > duration[7]){
 
+			// this step counter is used for input sweeps (originally "step" inputs)
 			step_counter++;
 			if(step_counter>NUM_STEPS-1){
 				step_counter = 0;}
@@ -1152,13 +1149,13 @@ int main( int argc , char *argv[])
 
 			cout << tse << " - " << time_start << " = " << time_now << endl;
 
-dbmsg_local = true;
+//dbmsg_local = true;
 			if(dbmsg_global || dbmsg_local){
 				// Alternate debug message, just print out the most current duration for each loop occasionally
 				cout << "Printing the most current expected vs. actual time since last execution for each loop" << endl;
 				for(int i = 0 ; i < NUM_LOOPS ; i++){
 					cout << "For " << frequency[i] << "(Hz) loop, expected: " << duration[i] << "(us), actual: " << watcher[i] << endl;}}
-dbmsg_local = false;
+//dbmsg_local = false;
 
 			watcher[8] = time_now - timer[8]; // used to check loop frequency
 			timer[8] = time_now;
