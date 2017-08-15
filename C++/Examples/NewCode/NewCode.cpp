@@ -866,13 +866,13 @@ int main( int argc , char *argv[])
 					{
 						yaw_desired = 100;
 					}else{
-						yaw_desired = atan2(lat-waypoints[wind_level_index][0],-(lng-waypoints[wind_level_index][1]));
+						yaw_desired = atan2(waypoints[wind_level_index][0]-lat,waypoints[wind_level_index][1]-lng);
 						yaw_desired = (yaw_desired/.0175)-90;
 					}
 					break;
 				case 'd':
 					heading_type_message = "Dumb Navigation";
-					yaw_desired = atan2((lat-target[0]),-(lng-target[1]));
+					yaw_desired = atan2(target[0]-lat,target[1]-lng);
 					yaw_desired = (yaw_desired/.0175)-90;
 					break;
 				default:
