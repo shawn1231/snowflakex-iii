@@ -33,7 +33,7 @@ using namespace std;
 //---------------------------------------------------------------------------------------------------User Configurable Parameters
 const bool dbmsg_global = false; // set flag to display all debug messages
 bool dbmsg_local  = false; // change in the code at a specific location to view local messages only
-char control_type = 'x'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
+char control_type = 'r'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
 char heading_type = '1'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm
 float user_heading = 115; //degress, only used if us is the heading type
 bool live_gains = false;
@@ -208,7 +208,9 @@ string status_gps_string = "no fix";
 
 //----------------------------------------------------------------------------------------------------------Waypoint Declarations
 double waypoints[50][3]; // waypoint array is 50x3
-double target[2] = {35.7178528,-120.76411}; // from step input payload drop
+//double target[2] = {35.7178528,-120.76411}; // from step input payload drop
+//double target[2] = {35.7185462, -120.763162} //simulated fixed heading
+double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
 // these are used to format the filename string
@@ -332,7 +334,7 @@ int main( int argc , char *argv[])
 	// read in the waypoints file
 	ifs.open("/home/pi/Navio2/C++/Examples/NewCode/waypoints.csv");
 	if(ifs){
-		cout << "Reading waypoints from file............" << endl;
+		cout << endl << "Reading waypoints from file............" << endl;
 		cout << "lat\tlong\talt" << endl;
 		for(int i = 0 ; i < 50 ; i++ ){ // row iterator
 			for(int j = 0 ; j < 3 ; j++){ // column iterator
@@ -344,8 +346,8 @@ int main( int argc , char *argv[])
 				ifs >> waypoints[i][j];
 				}
 
-			}
-		for(int i = 0 ; i < 50 ; i++){
+			}}
+/*		for(int i = 0 ; i < 50 ; i++){
 			for(int j = 0 ; j < 3 ; j++){
 				if(waypoints[i][0]!=0){
 					cout << waypoints[i][j];
@@ -353,7 +355,7 @@ int main( int argc , char *argv[])
 						cout << ",";}}}
 				if(waypoints[i+1][0] != 0){
 					cout << endl;}}}
-
+*/
 	else{
 		cout << "Could not read waypoints" << endl;
 		if(heading_type = 'n'){
@@ -633,7 +635,7 @@ int main( int argc , char *argv[])
 			"A,B,C,wn,zeta,kp,ki,kd,"
 			"yaw_desired,yaw_error,yaw_error_previous,yaw_error_rate,yaw_error_sum,adc_array[5],control_type,heading_type,"
 			"time_gps,lat,lng,alt_ellipsoid,msl_gps,horz_accuracy,vert_accuracy,"
-			"status_gps" << endl;
+			"status_gps,lat_waypoint,lng_waypoint" << endl;
 		usleep(20000);
 		//everything that needs to be set to zero by the killswitch goes here
 		multisine_counter = 0;
@@ -864,13 +866,14 @@ int main( int argc , char *argv[])
 					{
 						yaw_desired = 100;
 					}else{
-						yaw_desired = atan2(lat-waypoints[wind_level_index][0],lng-waypoints[wind_level_index][1]);
+						yaw_desired = atan2(lat-waypoints[wind_level_index][0],-(lng-waypoints[wind_level_index][1]));
+						yaw_desired = (yaw_desired/.0175)-90;
 					}
 					break;
 				case 'd':
 					heading_type_message = "Dumb Navigation";
-					yaw_desired = -atan2(10000*(lat-target[0]),10000*(lng-target[1]));
-					yaw_desired = yaw_desired/.0157-90;
+					yaw_desired = atan2((lat-target[0]),-(lng-target[1]));
+					yaw_desired = (yaw_desired/.0175)-90;
 					break;
 				default:
 					heading_type_message = "Default - North";
@@ -1041,7 +1044,8 @@ int main( int argc , char *argv[])
 			fout << yaw_desired << "," <<  yaw_error << "," << yaw_error_previous << "," << yaw_error_rate << ",";
 			fout << yaw_error_sum << "," << adc_array[5] << "," << control_type << "," << heading_type << ",";
 			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << ",";
-			fout << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << endl;
+			fout << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << ",";
+			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << endl;;
 
 			watcher[3] = time_now - timer[3]; // used to check loop frequency
 			timer[3] = time_now;
@@ -1088,8 +1092,8 @@ int main( int argc , char *argv[])
 
 		if( (time_now-timer[8]) > duration[8]){
 			//Output Message
-			if(dbmsg_global || dbmsg_local){
-			//if(!dbmsg_global && !dbmsg_local){
+			//if(dbmsg_global || dbmsg_local){
+			if(!dbmsg_global && !dbmsg_local){
 				cout << endl;
 				cout << "Current filename: " << filename_str << endl;
 				cout << "Barometer Altitude: " << msl << " ft" << endl;
@@ -1147,7 +1151,7 @@ int main( int argc , char *argv[])
 				cout << " Step counter: " << step_counter << endl;
 				multisine_counter++;}
 
-			cout << tse << " - " << time_start << " = " << time_now << endl;
+//			cout << tse << " - " << time_start << " = " << time_now << endl;
 
 //dbmsg_local = true;
 			if(dbmsg_global || dbmsg_local){

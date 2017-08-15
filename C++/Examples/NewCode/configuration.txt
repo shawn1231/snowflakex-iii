@@ -1,4 +1,4 @@
 p
-s
-0
-roberts_fri_smallchute_payload1_step1400-0
+d
+90
+payload3-roberts-tue815-pnav
