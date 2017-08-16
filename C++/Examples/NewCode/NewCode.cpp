@@ -563,7 +563,7 @@ int main( int argc , char *argv[])
 			yaw_mpu_integrated_previous = 0;
 			yaw_lsm_integrated = 0;
 			yaw_lsm_integrated_previous = 0;
-			wind_level_index = 0; // wind level for navigation, can only be incremented by the main loop to avoid "waypoint indecision"
+//			wind_level_index = 0; // wind level for navigation, can only be incremented by the main loop to avoid "waypoint indecision"
 			for(int i = 0 ; i < 3 ; i++){
 				gyro_z_lsm_old[i] = 0;
 				gyro_z_mpu_old[i] = 0;
@@ -668,9 +668,12 @@ int main( int argc , char *argv[])
 			dt = time_now-timer[0];
 			dt = dt/1000000.0; // convert from useconds
 
-			if(waypoints[wind_level_index][0] != 0){
+			if(wind_level_index<49){
 				if(msl_gps < waypoints[wind_level_index][2]){
 					wind_level_index++;}}
+			if(wind_level_index>1){
+				if(msl_gps > waypoints[wind_level_index][2]){
+					wind_level_index--;}}
 
 			// Tested sampling rate for IMUs, with both IMUs execution of the following block was taking
 			// approximate 1300us (~750Hz), slowed this loop down ot 500Hz so that there is a little
@@ -739,7 +742,7 @@ int main( int argc , char *argv[])
         	       		lat = pos_data[2]/10000000.00000;
 	        	        alt_ellipsoid = (pos_data[3]/1000.00000)*3.28;
 		               	msl_gps = (pos_data[4]/1000.00000)*3.28;
-				//msl_gps = 2500-step_counter*160; //uncomment to test navigation algorithm
+				//msl_gps = 500+step_counter*400; //uncomment to test navigation algorithm
         		        horz_accuracy = (pos_data[5]/1000.00000)*3.28;
 	                	vert_accuracy = (pos_data[6]/1000.00000)*3.28;
 			}
