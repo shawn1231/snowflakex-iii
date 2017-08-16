@@ -143,7 +143,7 @@ const float output_range[6][2] = {{-.05,.30},{2,-2},{-.185,.500},{-180,180},{-.1
 float coefficients[6][2];
 
 //---------------------------------------------------------------------------------------------------------------IMU Declarations
-#define DECLINATION 12.71 //magnetic declination for camp roberts
+#define DECLINATION -12.71 //magnetic declination for camp roberts
 #define WRAP_THRESHOLD 160.00 // wrap threshold for wrap counter (yaw is +/-180, need to make it continuous
 // vars to hold mpu values
 float a_mpu[3] , a_mpu_ahrs[3];
@@ -870,13 +870,13 @@ int main( int argc , char *argv[])
 						yaw_desired = 100;
 					}else{
 						yaw_desired = atan2(waypoints[wind_level_index][0]-lat,waypoints[wind_level_index][1]-lng);
-						yaw_desired = (yaw_desired/.0175)-90;
+						yaw_desired = (yaw_desired/.0175);
 					}
 					break;
 				case 'd':
 					heading_type_message = "Dumb Navigation";
 					yaw_desired = atan2(target[0]-lat,target[1]-lng);
-					yaw_desired = (yaw_desired/.0175)-90;
+					yaw_desired = (yaw_desired/.0175);
 					break;
 				default:
 					heading_type_message = "Default - North";
@@ -892,10 +892,10 @@ int main( int argc , char *argv[])
 			}
 
 			// account for magnetic declination
-			yaw_mpu_mahony = yaw_mpu_mahony + DECLINATION;
-			yaw_lsm_mahony = yaw_lsm_mahony + DECLINATION;
-			yaw_mpu_madgwick = yaw_mpu_madgwick + DECLINATION;
-			yaw_lsm_madgwick = yaw_lsm_madgwick + DECLINATION;
+			yaw_mpu_mahony = yaw_mpu_mahony - DECLINATION;
+			yaw_lsm_mahony = yaw_lsm_mahony - DECLINATION;
+			yaw_mpu_madgwick = yaw_mpu_madgwick - DECLINATION;
+			yaw_lsm_madgwick = yaw_lsm_madgwick - DECLINATION;
 
 			// calculate yaw error for controller
 			yaw_prev              = yaw_mpu_madgwick;
