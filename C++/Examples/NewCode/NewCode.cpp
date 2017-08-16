@@ -742,7 +742,7 @@ int main( int argc , char *argv[])
         	       		lat = pos_data[2]/10000000.00000;
 	        	        alt_ellipsoid = (pos_data[3]/1000.00000)*3.28;
 		               	msl_gps = (pos_data[4]/1000.00000)*3.28;
-				//msl_gps = 500+step_counter*400; //uncomment to test navigation algorithm
+//				msl_gps = 500+step_counter*400; //uncomment to test navigation algorithm
         		        horz_accuracy = (pos_data[5]/1000.00000)*3.28;
 	                	vert_accuracy = (pos_data[6]/1000.00000)*3.28;
 			}
