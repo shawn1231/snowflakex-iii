@@ -210,7 +210,8 @@ string status_gps_string = "no fix";
 double waypoints[50][3]; // waypoint array is 50x3
 //double target[2] = {35.7178528,-120.76411}; // from step input payload drop
 //double target[2] = {35.7185462, -120.763162} //simulated fixed heading
-double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
+//double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
+double target[2] = {35.6414, -120.68810};
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
 // these are used to format the filename string
@@ -875,7 +876,7 @@ int main( int argc , char *argv[])
 					break;
 				case 'd':
 					heading_type_message = "Dumb Navigation";
-					yaw_desired = atan2(target[0]-lat,target[1]-lng);
+					yaw_desired = atan2(target[1]-lng,target[0]-lat);
 					yaw_desired = (yaw_desired/.0175);
 					break;
 				default:
@@ -897,10 +898,11 @@ int main( int argc , char *argv[])
 			yaw_mpu_madgwick = yaw_mpu_madgwick - DECLINATION;
 			yaw_lsm_madgwick = yaw_lsm_madgwick - DECLINATION;
 
+
 			// calculate yaw error for controller
 			yaw_prev              = yaw_mpu_madgwick;
 			yaw_error_previous    = yaw_error;
-			yaw_error             = yaw_desired -(yaw_mpu_madgwick+360*num_wraps);
+			yaw_error             = yaw_desired -(yaw_mpu_madgwick+(360*num_wraps));
 			yaw_error_rate        = (yaw_error - yaw_error_previous)/dt_control;
 			yaw_error_sum         = (((yaw_error + yaw_error_previous)*dt_control)/2) + yaw_error_sum;
 
