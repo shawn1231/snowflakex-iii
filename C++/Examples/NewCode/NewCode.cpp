@@ -870,7 +870,7 @@ int main( int argc , char *argv[])
 					{
 						yaw_desired = 100;
 					}else{
-						yaw_desired = atan2(waypoints[wind_level_index][0]-lat,waypoints[wind_level_index][1]-lng);
+						yaw_desired = atan2(waypoints[wind_level_index][1]-lng,waypoints[wind_level_index][0]-lat);
 						yaw_desired = (yaw_desired/.0175);
 					}
 					break;
