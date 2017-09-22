@@ -27,6 +27,8 @@
 #include <Navio/ADC.h>
 // GPS Includes
 #include "Navio/Ublox.h"
+// Serial Includes
+#include <wiringSerial.h>
 
 using namespace std;
 
@@ -522,6 +524,9 @@ int main( int argc , char *argv[])
 			return EXIT_FAILURE;}}
 	else{ // gps is good!
 		cout << "  --GPS successfully initialized--    " << endl;}
+	cout << "Initializing Serial Output............" << endl;
+	int serialHandle = serialOpen("/dev/ttyAMA0", 9600);
+	cout << "--Serial Output successfully opened --" << endl;
 
 	//------------------------------------------------------------------------------------------------------------------Welcome Message
 	usleep(500000);
@@ -1052,6 +1057,18 @@ int main( int argc , char *argv[])
 			fout << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << ",";
 			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << endl;;
 
+/*			// Serial Output to help with payload recovery
+			if((int(time_gps) % 4) ==  0){
+				serialPrintf(serialHandle, "--Payload 4--\nGPS Position:\n");
+				serialPrintf(serialHandle, to_string(lat).c_str());
+				serialPrintf(serialHandle, "(deg), ");
+				serialPrintf(serialHandle, to_string(lng).c_str());
+				serialPrintf(serialHandle, "(deg)\nAltitude: ");
+				serialPrintf(serialHandle, to_string(msl_gps).c_str());
+				serialPrintf(serialHandle, "(ft)\n\n");
+			}
+*/
+
 			watcher[3] = time_now - timer[3]; // used to check loop frequency
 			timer[3] = time_now;
 		}
@@ -1165,6 +1182,18 @@ int main( int argc , char *argv[])
 				for(int i = 0 ; i < NUM_LOOPS ; i++){
 					cout << "For " << frequency[i] << "(Hz) loop, expected: " << duration[i] << "(us), actual: " << watcher[i] << endl;}}
 //dbmsg_local = false;
+
+			// Serial Output to help with payload recovery
+			if(((int(time_gps)+8) % 15) ==  0){
+				serialPrintf(serialHandle, "--Payload 4--\nGPS Position:\n");
+				serialPrintf(serialHandle, to_string(lat).c_str());
+				serialPrintf(serialHandle, "(deg), ");
+				serialPrintf(serialHandle, to_string(lng).c_str());
+				serialPrintf(serialHandle, "(deg)\nAltitude: ");
+				serialPrintf(serialHandle, to_string(msl_gps).c_str());
+				serialPrintf(serialHandle, "(ft)\n\n");
+			}
+
 
 			watcher[8] = time_now - timer[8]; // used to check loop frequency
 			timer[8] = time_now;
