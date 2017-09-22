@@ -35,13 +35,8 @@ using namespace std;
 //---------------------------------------------------------------------------------------------------User Configurable Parameters
 const bool dbmsg_global = false; // set flag to display all debug messages
 bool dbmsg_local  = false; // change in the code at a specific location to view local messages only
-<<<<<<< HEAD
-char control_type = 'r'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
-char heading_type = '1'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm
-=======
 char control_type = 'x'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
 char heading_type = 'd'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm, d=dumb navigation
->>>>>>> 9a9f4bad67d5dcf6d0b00585fc51a18ab84b7797
 float user_heading = 115; //degress, only used if us is the heading type
 bool live_gains = false;
 
@@ -150,12 +145,8 @@ const float output_range[6][2] = {{-.05,.30},{2,-2},{-.185,.500},{-180,180},{-.1
 float coefficients[6][2];
 
 //---------------------------------------------------------------------------------------------------------------IMU Declarations
-<<<<<<< HEAD
 #define DECLINATION -12.71 //magnetic declination for camp roberts
-=======
-#define DECLINATION 1.70 //magnetic declination for KC
-//#define DECLINATION 12.71 //magnetic declination for camp roberts
->>>>>>> 9a9f4bad67d5dcf6d0b00585fc51a18ab84b7797
+//#define DECLINATION 1.70 //magnetic declination for KC
 #define WRAP_THRESHOLD 160.00 // wrap threshold for wrap counter (yaw is +/-180, need to make it continuous
 // vars to hold mpu values
 float a_mpu[3] , a_mpu_ahrs[3];
@@ -221,13 +212,10 @@ string status_gps_string = "no fix";
 //----------------------------------------------------------------------------------------------------------Waypoint Declarations
 double waypoints[50][3]; // waypoint array is 50x3
 //double target[2] = {35.7178528,-120.76411}; // from step input payload drop
-<<<<<<< HEAD
 //double target[2] = {35.7185462, -120.763162} //simulated fixed heading
 //double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
 double target[2] = {35.6414, -120.68810};
-=======
-double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
->>>>>>> 9a9f4bad67d5dcf6d0b00585fc51a18ab84b7797
+//double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
 // these are used to format the filename string
@@ -1198,8 +1186,8 @@ while(true)
 //dbmsg_local = false;
 
 			// Serial Output to help with payload recovery
-			if(((int(time_gps)+8) % 15) ==  0){
-				serialPrintf(serialHandle, "--Payload 4--\nGPS Position:\n");
+			if(((int(time_gps)+6) % 15) ==  0){
+				serialPrintf(serialHandle, "--Payload 3--\nGPS Position:\n");
 				serialPrintf(serialHandle, to_string(lat).c_str());
 				serialPrintf(serialHandle, "(deg), ");
 				serialPrintf(serialHandle, to_string(lng).c_str());
