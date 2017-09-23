@@ -35,7 +35,7 @@ using namespace std;
 //---------------------------------------------------------------------------------------------------User Configurable Parameters
 const bool dbmsg_global = false; // set flag to display all debug messages
 bool dbmsg_local  = false; // change in the code at a specific location to view local messages only
-char control_type = 'x'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
+char control_type = 'p'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
 char heading_type = 'd'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm, d=dumb navigation
 float user_heading = 115; //degress, only used if us is the heading type
 bool live_gains = false;
@@ -145,7 +145,9 @@ const float output_range[6][2] = {{-.05,.30},{2,-2},{-.185,.500},{-180,180},{-.1
 float coefficients[6][2];
 
 //---------------------------------------------------------------------------------------------------------------IMU Declarations
-#define DECLINATION -12.71 //magnetic declination for camp roberts
+//#define DECLINATION -12.71 //magnetic declination for camp roberts
+//#define DECLINATION -10.33 //magnetic declination for Yuma Proving Ground
+#define DECLINATION -10.09 //magnetic declination for Eloy AZ
 //#define DECLINATION 1.70 //magnetic declination for KC
 #define WRAP_THRESHOLD 160.00 // wrap threshold for wrap counter (yaw is +/-180, need to make it continuous
 // vars to hold mpu values
@@ -214,7 +216,9 @@ double waypoints[50][3]; // waypoint array is 50x3
 //double target[2] = {35.7178528,-120.76411}; // from step input payload drop
 //double target[2] = {35.7185462, -120.763162} //simulated fixed heading
 //double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
-double target[2] = {35.6414, -120.68810};
+//double target[2] = {35.6414, -120.68810};
+//double target[2] = {33.397694,-114.273444};
+double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
 //double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
@@ -546,9 +550,10 @@ int main( int argc , char *argv[])
 	while(true)
 	{
 		int standby_message_timer = 0; // used to limit the frequency of the standby message
+		while(!(adc_array[4] < 4000)){
 //		while(!((rc_array[5]>1500)&&(adc_array[4]<4000))){
-bool temp_flag = false; // uncomment for testing with no transmitter
-while(!temp_flag){ // uncomment for testing with no transmitter
+//bool temp_flag = false; // uncomment for testing with no transmitter
+//while(!temp_flag){ // uncomment for testing with no transmitter
 			if(standby_message_timer > 250){
 				cout << endl << "---------------------------------------" << endl << "           Autopilot Inactive         " << endl;
 				cout << "  Dynamic Lines at Neutral Deflection " << endl;
@@ -579,7 +584,7 @@ while(!temp_flag){ // uncomment for testing with no transmitter
 			yaw_error_sum       = 0; // prevent integral wind up
 			yaw_error           = 0;
 			yaw_error_previous  = 0;
-temp_flag = true; // uncomment for testing with no transmitter
+//temp_flag = true; // uncomment for testing with no transmitter
 
 		}
 		time_t result = time(NULL);
@@ -661,8 +666,9 @@ temp_flag = true; // uncomment for testing with no transmitter
 		num_wraps = 0;
 		yaw_prev = 0;
 
+	while(adc_array[4] < 4000)
 //	while((rc_array[5]>1500)&&(adc_array[4]<4000))
-while(true)
+//while(true)
 	{
 		// refresh time now to prepare for another loop execution
 		gettimeofday(&time_obj, NULL); // must first update the time_obj
@@ -943,7 +949,8 @@ while(true)
 			switch(control_type){
 				case 'p':
 					control_type_message = "PID";
-					if(rc_array[4] > 1500){
+					//if(rc_array[4] > 1500){
+					if(0){
 						winch_right_cmd = LINE_NEUTRAL + (kp*yaw_error + ki*yaw_error_sum + kd*yaw_error_rate);
 						winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
 					} else {
@@ -1186,7 +1193,7 @@ while(true)
 //dbmsg_local = false;
 
 			// Serial Output to help with payload recovery
-			if(((int(time_gps)+6) % 15) ==  0){
+			if(((int(time_gps)-3) % 10) ==  0){
 				serialPrintf(serialHandle, "--Payload 3--\nGPS Position:\n");
 				serialPrintf(serialHandle, to_string(lat).c_str());
 				serialPrintf(serialHandle, "(deg), ");

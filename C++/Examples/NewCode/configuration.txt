@@ -1,4 +1,4 @@
 p
-n
+d
 0
-payload4-roberts-thu817-pnav
+payload3-eloy-wednesday-lift2
