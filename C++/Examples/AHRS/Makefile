@@ -1,10 +1,9 @@
 CXX ?= g++
 NAVIO = ../../Navio
-INCLUDES = -I ../../Navio
+INCLUDES = -I ../..
 
 all:
-	$(MAKE) -C ../../Navio all
-	$(CXX) -std=c++11 $(INCLUDES) AHRS.cpp -L$(NAVIO) -lnavio -o AHRS -lrt -lpthread
+	$(CXX) $(INCLUDES) AHRS.cpp $(NAVIO)/MPU9250.cpp $(NAVIO)/LSM9DS1.cpp $(NAVIO)/Util.cpp -o AHRS -lrt -lpthread
 
 clean:
-	rm -f AHRS
+	rm AHRS

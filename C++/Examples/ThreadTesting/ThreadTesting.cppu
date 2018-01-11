@@ -1,0 +1,33 @@
+#include <unistd.h>
+#include <iostream>
+#include <time.h>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+
+using namespace std;
+
+mutex mtx;
+condition_variable cv;
+
+int number = 0;
+
+void gps_thread(){
+	while(true){
+		number = rand() % 10 + 1;
+		if(number < 3){ // GPS true condition
+			cout << "gps data is good" << endl;
+		}
+	}
+}
+
+
+
+int main(){
+
+	srand(time(NULL));
+
+	thread t1(gps_thread);
+
+	return 0;
+}

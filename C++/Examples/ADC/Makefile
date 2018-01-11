@@ -1,10 +1,9 @@
 CXX ?= g++
 NAVIO = ../../Navio
-INCLUDES = -I ../../Navio
+INCLUDES = -I ../..
 
 all:
-	$(MAKE) -C ../../Navio all
-	$(CXX) -std=gnu++11 $(INCLUDES)  ADC.cpp -L$(NAVIO) -lnavio -o ADC
+	$(CXX) -std=gnu++11 $(INCLUDES) ADC.cpp $(NAVIO)/Util.cpp $(NAVIO)/ADC.cpp -o ADC
 
 clean:
-	rm -f ADC
+	rm ADC

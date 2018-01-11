@@ -1,16 +1,9 @@
 CXX ?= g++
 NAVIO = ../../Navio
-
-PIGPIO_PATH := $(PIGPIO_PATH)
-
-LIB = -L$(PIGPIO_PATH)
-
-INCLUDES = -I ../../Navio -I$(PIGPIO_PATH)
+INCLUDES = -I ../..
 
 all:
-	$(MAKE) -C ../../Navio all
-	$(CXX) -std=gnu++11 $(INCLUDES) $(LIB) RCInput.cpp -L$(NAVIO) -lnavio -o RCInput -lrt -lpthread -lpigpio || $(MAKE) pigpio
+	$(CXX) -std=gnu++11 $(INCLUDES) RCInput.cpp $(NAVIO)/Util.cpp $(NAVIO)/RCInput.cpp -o RCInput
 
 clean:
-	rm -f RCInput
-
+	rm RCInput

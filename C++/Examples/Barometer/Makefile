@@ -1,10 +1,9 @@
 CXX ?= g++
 NAVIO = ../../Navio
-INCLUDES = -I ../../Navio
+INCLUDES = -I ../..
 
 all:
-	$(MAKE) -C ../../Navio all
-	$(CXX) $(INCLUDES) Barometer.cpp -L$(NAVIO) -lnavio -o Barometer
+	$(CXX) $(INCLUDES) Barometer.cpp $(NAVIO)/MS5611.cpp $(NAVIO)/I2Cdev.cpp $(NAVIO)/Util.cpp -o Barometer
 
 clean:
-	rm -f Barometer
+	rm Barometer

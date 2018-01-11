@@ -1,48 +1,31 @@
 #include <unistd.h>
 #include <cstdio>
 
-#include <Navio2/RCInput_Navio2.h>
-#include <Navio+/RCInput_Navio.h>
-#include <Common/Util.h>
-#include <memory>
+#include <Navio/RCInput.h>
+#include "Navio/Util.h"
 
-#define READ_FAILED -1
-
-std::unique_ptr <RCInput> get_rcin()
-{
-    if (get_navio_version() == NAVIO2)
-    {
-        auto ptr = std::unique_ptr <RCInput>{ new RCInput_Navio2() };
-        return ptr;
-    } else
-    {
-        auto ptr = std::unique_ptr <RCInput>{ new RCInput_Navio() };
-        return ptr;
-    }
-
-}
 
 
 int main(int argc, char *argv[])
 {
+    RCInput rcin{};
+
     if (check_apm()) {
         return 1;
     }
 
-    auto rcin = get_rcin();
+    rcin.init();
 
-    rcin->initialize();
-
-    while (true)
+    while (true) 
     {
-        int period = rcin->read(2);
-        if (period == READ_FAILED)
-            return EXIT_FAILURE;
-        printf("%d\n", period);
-        
+        for(int i = 0 ; i < rcin.channel_count ; i++)
+	{
+		int period = rcin.read(i);
+	        printf("%d ", period, " ");
+        }
+	printf("\n");
         sleep(1);
     }
 
     return 0;
 }
-

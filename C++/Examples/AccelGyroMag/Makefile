@@ -1,10 +1,9 @@
 CXX ?= g++
 NAVIO = ../../Navio
-INCLUDES = -I ../../Navio
+INCLUDES = -I ../..
 
 all:
-	$(MAKE) -C ../../Navio all
-	$(CXX) -std=c++11 $(INCLUDES) -L$(NAVIO) AccelGyroMag.cpp -lnavio -o AccelGyroMag
+	$(CXX) -std=gnu++11  $(INCLUDES) $(NAVIO)/LSM9DS1.cpp $(NAVIO)/MPU9250.cpp $(NAVIO)/Util.cpp AccelGyroMag.cpp -o AccelGyroMag
 
 clean:
 	rm -f AccelGyroMag

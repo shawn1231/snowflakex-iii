@@ -8,99 +8,117 @@ inertial measurement unit: MPU9250 or LSM9DS1 over SPI on Raspberry Pi + Navio.
 Navio's onboard sensors are connected to the SPI bus on Raspberry Pi
 and can be read through /dev/spidev0.1 (MPU9250), /dev/spidev0.3 (acc/gyro LSM9DS1)
 and /dev/spidev0.2 (mag LSM9DS1).
-
-To run this example navigate to the directory containing it and run following commands:
-make
-./AccelGyroMag -i [sensor name]
-Sensors names: mpu is MPU9250, lsm is LSM9DS1.
-For print help:
-./AccelGyroMag -h
 */
 
-#include "Common/MPU9250.h"
-#include "Navio2/LSM9DS1.h"
-#include "Common/Util.h"
+
+//#include "Navio/NewClass.h"
+#include "Navio/MPU9250.h"
+#include "Navio/LSM9DS1.h"
+#include "Navio/Util.h"
 #include <unistd.h>
+#include <fstream>
+#include <iostream>
+#include <sys/time.h>
+#include <ctime>
 #include <string>
-#include <memory>
 
-std::unique_ptr <InertialSensor> get_inertial_sensor( std::string sensor_name)
+using namespace std;
+
+#define TITLE_LENGTH 12
+#define OFFSET 4
+
+char file_title[TITLE_LENGTH+5];
+struct timeval tv;
+long long currenttime = 0;
+long long offset = 0;
+
+bool file_exists(string filename)
 {
-    if (sensor_name == "mpu") {
-        printf("Selected: MPU9250\n");
-        auto ptr = std::unique_ptr <InertialSensor>{ new MPU9250() };
-        return ptr;
-    }
-    else if (sensor_name == "lsm") {
-        printf("Selected: LSM9DS1\n");
-        auto ptr = std::unique_ptr <InertialSensor>{ new LSM9DS1() };
-        return ptr;
-    }
-    else {
-        return NULL;
-    }
+	ifstream checkfile(filename);
+	return checkfile;
 }
 
-void print_help()
-{
-    printf("Possible parameters:\nSensor selection: -i [sensor name]\n");
-    printf("Sensors names: mpu is MPU9250, lsm is LSM9DS1\nFor help: -h\n");
-}
-
-std::string get_sensor_name(int argc, char *argv[])
-{
-    if (get_navio_version() == NAVIO2) {
-
-        if (argc < 2) {
-            printf("Enter parameter\n");
-            print_help();
-            return std::string();
-        }
-
-        // prevent the error message
-        opterr = 0;
-        int parameter;
-
-        while ((parameter = getopt(argc, argv, "i:h")) != -1) {
-            switch (parameter) {
-            case 'i': if (!strcmp(optarg,"mpu") ) return "mpu";
-                            else return "lsm";
-            case 'h': print_help(); return "-1";
-            case '?': printf("Wrong parameter.\n");
-                      print_help();
-                      return std::string();
-            }
-        }
-
-    } else { //sensor on NAVIO+
-
-        return "mpu";
-    }
-
-}
-//=============================================================================
-int main(int argc, char *argv[])
+int main( int argc, char *argv[] )
 {
 
-    if (check_apm()) {
-        return 1;
+    int parameter;
+    char *logfile_notes;
+    string file_path;
+
+    while((parameter = getopt(argc,argv, "hd:")) != -1){
+	switch(parameter){
+		case 'h': cout << "Use option \"-d <FileNotes>\" to append a note to the log file" << endl; return EXIT_FAILURE;
+		case 'd': logfile_notes = optarg;
+		    file_path = string(logfile_notes);
+		    file_path = "LogFiles/"+file_path+"_";
+		    break;
+		case '?': cout << "Wrong options" << endl; return EXIT_FAILURE;}}
+    //cout << logfile_path << endl;
+
+
+    time_t result = time(NULL);
+    char *today = asctime(localtime(&result));
+    today[strlen(today) - 1]= '\0';
+    for(int i = 0 ; i < TITLE_LENGTH ; i++){
+	if(today[i+OFFSET] == ' ' || today[i+OFFSET] == ':'){
+		if(i == 8-OFFSET){
+//			cout << "add leading zero" << endl;
+			file_title[i] = '0';}
+		else{
+//			cout << "caught the chars" << endl;
+			file_title[i] = '_';}}
+	else{
+//		cout << "else condition" << endl;
+		file_title[i] = today[i+OFFSET];}}
+
+    //cout << endl << file_title << endl;
+
+    InertialSensor *sensor;
+    sensor = new MPU9250();
+
+//    file_title[TITLE_LENGTH+1] = '_';
+    file_title[TITLE_LENGTH+0] = '-';
+    file_title[TITLE_LENGTH+1] = '0';
+    file_title[TITLE_LENGTH+2] = '.';
+    file_title[TITLE_LENGTH+3] = 'c';
+    file_title[TITLE_LENGTH+4] = 's';
+    file_title[TITLE_LENGTH+5] = 'v';
+
+//    string file_path(logfile_notes);
+//    file_path = "LogFiles/"+file_path+"_";
+//    cout << "this is the file path to be added" << file_path << endl;
+
+    string file_title_str(file_title);
+    file_title_str = file_path+file_title_str;
+    cout<< "This is the whole file title: " << endl << file_title_str << endl;
+
+    int file_title_index = 1;
+
+
+
+    while(file_exists(file_title_str))
+    {
+	//cout << "cannot create file" << file_title << endl;
+	file_title[TITLE_LENGTH+0] = '-';
+	file_title[TITLE_LENGTH+1] = file_title_index+'0';
+	file_title[TITLE_LENGTH+2] = '.';
+	file_title[TITLE_LENGTH+3] = 'c';
+	file_title[TITLE_LENGTH+4] = 's';
+	file_title[TITLE_LENGTH+5] = 'v';
+	file_title_index++;
+	string temp(file_title);
+	file_title_str = file_path+temp;
+	usleep(50000);
     }
 
-    auto sensor_name = get_sensor_name(argc, argv);
-    if (sensor_name.empty())
-        return EXIT_FAILURE;
+    //string str(file_title);
 
-    auto sensor = get_inertial_sensor(sensor_name);
+    cout << file_title_str << endl;
+    ofstream fout;
+    fout.open(file_title_str,ios::out);
 
-    if (!sensor) {
-        printf("Wrong sensor name. Select: mpu or lsm\n");
-        return EXIT_FAILURE;
-    }
+   // fout << "start_time,time_since_start,ax,ay,az,gx,gy,gz,mx,my,mz" << endl;
 
-    if (!sensor->probe()) {
-        printf("Sensor not enabled\n");
-        return EXIT_FAILURE;
-    }
     sensor->initialize();
 
     float ax, ay, az;
@@ -117,6 +135,18 @@ int main(int argc, char *argv[])
         printf("Gyr: %+8.3f %+8.3f %+8.3f  ", gx, gy, gz);
         printf("Mag: %+7.3f %+7.3f %+7.3f\n", mx, my, mz);
 
+	gettimeofday(&tv, NULL);
+	if(offset == 0)
+	{
+		offset = 1000000 * tv.tv_sec + tv.tv_usec;
+	}
+
+	currenttime = (1000000 * tv.tv_sec + tv.tv_usec)-offset;
+
+//	cout << currenttime << ", " << offset << ",";
+
+	fout << today << "," << currenttime << "," << ax << "," << ay << "," << az << "," << gx << "," << gy << "," << gz << "," << mx << "," << my << "," << mz << endl;
        usleep(500000);
     }
+    return 0;
 }
