@@ -27,14 +27,25 @@
 #include <Navio/ADC.h>
 // GPS Includes
 #include "Navio/Ublox.h"
+// Serial Includes
+#include <wiringSerial.h>
 
 using namespace std;
+
+float time_sweep = 0;
+const float total_time = 120;
+const float sweep_amp = 60;
+float phi = 0;
+float wmin = .6;
+float wmax = 60;
+float c1 = 4;
+float c2 = .0187;
 
 //---------------------------------------------------------------------------------------------------User Configurable Parameters
 const bool dbmsg_global = false; // set flag to display all debug messages
 bool dbmsg_local  = false; // change in the code at a specific location to view local messages only
-char control_type = 'r'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
-char heading_type = '1'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm
+char control_type = 'p'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
+char heading_type = 'd'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm, d=dumb navigation
 float user_heading = 115; //degress, only used if us is the heading type
 bool live_gains = false;
 
@@ -80,9 +91,14 @@ float yaw_prev = 0;
 //double kd_start = .05628;
 
 // Roberts half gains
-double kp_start = .07937;
-double ki_start = .05591;
-double kd_start = .02814;
+//double kp_start = .07937;
+//double ki_start = .05591;
+//double kd_start = .02814;
+
+// UMKC Quad half gains
+double kp_start = .0350;
+double ki_start = .0250;
+double kd_start = .0200;
 
 // Control Validation Program - Run 2, OK Gains
 //double kp_start = .2686;
@@ -144,6 +160,10 @@ float coefficients[6][2];
 
 //---------------------------------------------------------------------------------------------------------------IMU Declarations
 #define DECLINATION -12.71 //magnetic declination for camp roberts
+//#define DECLINATION -10.33 //magnetic declination for Yuma Proving Ground
+//#define DECLINATION -10.09 //magnetic declination for Eloy AZ
+//#define DECLINATION 1.70 //magnetic declination for KC
+//#define DECLINATION 5.62 //Tampa Florida
 #define WRAP_THRESHOLD 160.00 // wrap threshold for wrap counter (yaw is +/-180, need to make it continuous
 // vars to hold mpu values
 float a_mpu[3] , a_mpu_ahrs[3];
@@ -211,11 +231,18 @@ double waypoints[50][3]; // waypoint array is 50x3
 //double target[2] = {35.7178528,-120.76411}; // from step input payload drop
 //double target[2] = {35.7185462, -120.763162} //simulated fixed heading
 //double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
-double target[2] = {35.6414, -120.68810};
+//double target[2] = {35.6414, -120.68810};
+//double target[2] = {33.397694,-114.273444};
+double target[2] = {35.7177763,-120.7634692}; // elbow waypoint
+//double target[2] = {35.7170617, -120.7645599};
+//double target[2] = {39.0068626,-94.5382487};
+//double target[2] = {32.791300, -111.434883}; //Eloy area 51 IP
+//double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
+//double target[2] = {28.3149810, -82.4437559};
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
 // these are used to format the filename string
-#define FILENAME_LENGTH 12
+#define FILENAME_LENGTH 15
 #define FILENAME_OFFSET 4
 // leave extra room for '.csv' and potential '-1', '-2', etc.
 char filename[FILENAME_LENGTH+6];
@@ -224,7 +251,7 @@ string file_location = "/home/pi/Navio2/C++/Examples/NewCode/LogFiles/";
 // function to check if file exists so that the filename can be dynamically changed
 bool file_exists(string name_of_file){
 	ifstream checkfile(name_of_file); // try to read from the file
-	return checkfile;} // cast the result to bool, if file opens, this returns true (it exists)
+	return bool(checkfile);} // cast the result to bool, if file opens, this returns true (it exists)
 
 int main( int argc , char *argv[])
 {
@@ -522,6 +549,9 @@ int main( int argc , char *argv[])
 			return EXIT_FAILURE;}}
 	else{ // gps is good!
 		cout << "  --GPS successfully initialized--    " << endl;}
+	cout << "Initializing Serial Output............" << endl;
+	int serialHandle = serialOpen("/dev/ttyAMA0", 9600);
+	cout << "--Serial Output successfully opened --" << endl;
 
 	//------------------------------------------------------------------------------------------------------------------Welcome Message
 	usleep(500000);
@@ -539,7 +569,8 @@ int main( int argc , char *argv[])
 	while(true)
 	{
 		int standby_message_timer = 0; // used to limit the frequency of the standby message
-		while(!((rc_array[5]>1500)&&(adc_array[4]<4000))){
+		while(!(adc_array[4] > 4000)){
+//		while(!((rc_array[5]>1500)&&(adc_array[4]<4000))){
 //bool temp_flag = false; // uncomment for testing with no transmitter
 //while(!temp_flag){ // uncomment for testing with no transmitter
 			if(standby_message_timer > 250){
@@ -559,6 +590,7 @@ int main( int argc , char *argv[])
 			usleep(5000);
 			standby_message_timer++; // increment the message delay timer
 			// everything that needs to be set to zero by the killswitch goes here
+			time_sweep = 0;
 			multisine_counter = 0; // time counter for the multisine input
 			yaw_mpu_integrated = 0; // integrated yaw
 			yaw_mpu_integrated_previous = 0;
@@ -639,6 +671,7 @@ int main( int argc , char *argv[])
 			"status_gps,lat_waypoint,lng_waypoint" << endl;
 		usleep(20000);
 		//everything that needs to be set to zero by the killswitch goes here
+		time_sweep = 0;
 		multisine_counter = 0;
 		yaw_mpu_integrated = 0;
 		yaw_mpu_integrated_previous = 0;
@@ -654,7 +687,8 @@ int main( int argc , char *argv[])
 		num_wraps = 0;
 		yaw_prev = 0;
 
-	while((rc_array[5]>1500)&&(adc_array[4]<4000))
+	while(adc_array[4] > 4000)
+//	while((rc_array[5]>1500)&&(adc_array[4]<4000))
 //while(true)
 	{
 		// refresh time now to prepare for another loop execution
@@ -870,7 +904,7 @@ int main( int argc , char *argv[])
 					{
 						yaw_desired = 100;
 					}else{
-						yaw_desired = atan2(waypoints[wind_level_index][0]-lat,waypoints[wind_level_index][1]-lng);
+						yaw_desired = atan2(waypoints[wind_level_index][1]-lng,waypoints[wind_level_index][0]-lat);
 						yaw_desired = (yaw_desired/.0175);
 					}
 					break;
@@ -878,6 +912,11 @@ int main( int argc , char *argv[])
 					heading_type_message = "Dumb Navigation";
 					yaw_desired = atan2(target[1]-lng,target[0]-lat);
 					yaw_desired = (yaw_desired/.0175);
+					break;
+				case 'f':
+					heading_type_message = "Frequency Sweep";
+					phi = wmin*time_sweep + c2*(wmax-wmin)*((total_time/c1)*exp(c1*time_sweep/total_time)-time_sweep);
+					yaw_desired = sweep_amp*sin(phi);
 					break;
 				default:
 					heading_type_message = "Default - North";
@@ -936,7 +975,8 @@ int main( int argc , char *argv[])
 			switch(control_type){
 				case 'p':
 					control_type_message = "PID";
-					if(rc_array[4] > 1500){
+					//if(rc_array[4] > 1500){
+					if(0){
 						winch_right_cmd = LINE_NEUTRAL + (kp*yaw_error + ki*yaw_error_sum + kd*yaw_error_rate);
 						winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
 					} else {
@@ -1052,6 +1092,29 @@ int main( int argc , char *argv[])
 			fout << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << ",";
 			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << endl;;
 
+/*			// Serial Output to help with payload recovery
+			if((int(time_gps) % 4) ==  0){
+				serialPrintf(serialHandle, "--Payload 4--\nGPS Position:\n");
+				serialPrintf(serialHandle, to_string(lat).c_str());
+				serialPrintf(serialHandle, "(deg), ");
+				serialPrintf(serialHandle, to_string(lng).c_str());
+				serialPrintf(serialHandle, "(deg)\nAltitude: ");
+				serialPrintf(serialHandle, to_string(msl_gps).c_str());
+				serialPrintf(serialHandle, "(ft)\n\n");
+			}
+
+
+*/
+
+			if(time_sweep <= total_time)
+			{
+				time_sweep = time_sweep + .01;
+			}
+			else
+			{
+				yaw_desired = 0;
+			}
+
 			watcher[3] = time_now - timer[3]; // used to check loop frequency
 			timer[3] = time_now;
 		}
@@ -1165,6 +1228,18 @@ int main( int argc , char *argv[])
 				for(int i = 0 ; i < NUM_LOOPS ; i++){
 					cout << "For " << frequency[i] << "(Hz) loop, expected: " << duration[i] << "(us), actual: " << watcher[i] << endl;}}
 //dbmsg_local = false;
+
+			// Serial Output to help with payload recovery
+			if(((int(time_gps)-3) % 10) ==  0){
+				serialPrintf(serialHandle, "--Payload 1--\nGPS Position:\n");
+				serialPrintf(serialHandle, to_string(lat).c_str());
+				serialPrintf(serialHandle, "(deg), ");
+				serialPrintf(serialHandle, to_string(lng).c_str());
+				serialPrintf(serialHandle, "(deg)\nAltitude: ");
+				serialPrintf(serialHandle, to_string(msl_gps).c_str());
+				serialPrintf(serialHandle, "(ft)\n\n");
+			}
+
 
 			watcher[8] = time_now - timer[8]; // used to check loop frequency
 			timer[8] = time_now;
