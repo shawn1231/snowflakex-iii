@@ -1,8 +1,4 @@
 p
 d
 0
-<<<<<<< HEAD
-payload1-070618-UMKC-finalsystemscheck
-=======
-payload3-eloy-wednesday-lift2
->>>>>>> 103ceabeac16c906957867a5c104401b2c7f38cc
+payload1-07102018-CampRoberts_Tue_Lift1-dnavtogetwp
