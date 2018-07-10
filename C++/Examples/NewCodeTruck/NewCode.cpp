@@ -27,24 +27,13 @@
 #include <Navio/ADC.h>
 // GPS Includes
 #include "Navio/Ublox.h"
-// Serial Includes
-#include <wiringSerial.h>
 
 using namespace std;
-
-float time_sweep = 0;
-const float total_time = 120;
-const float sweep_amp = 60;
-float phi = 0;
-float wmin = .6;
-float wmax = 60;
-float c1 = 4;
-float c2 = .0187;
 
 //---------------------------------------------------------------------------------------------------User Configurable Parameters
 const bool dbmsg_global = false; // set flag to display all debug messages
 bool dbmsg_local  = false; // change in the code at a specific location to view local messages only
-char control_type = 'p'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
+char control_type = 'x'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
 char heading_type = 'd'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm, d=dumb navigation
 float user_heading = 115; //degress, only used if us is the heading type
 bool live_gains = false;
@@ -69,54 +58,11 @@ float yaw_error_rate = 0;
 int num_wraps = 0;
 float yaw_prev = 0;
 
-//------------------------------------------------------------------------------------------------------------------PID Variables
-// 8:15 gains - starting point
-//float kp_start    = -.03246;
-//float ki_start    = -.03494;
-//float kd_start    = -.007003;
-
-//small chute gains right actuator
-//float kp_start = .32068;
-//float ki_start = .22595;
-//float kd_start = .11378;
-
-//gains from pid-tuning-6-jun-20-05-05-0
-//double kp_start = .1950;
-//double ki_start = .0027;
-//double kd_start = .0600;
-
-// Control Validation Program - Run 1, Baseline Gains
-//double kp_start = .15874;
-//double ki_start = .11182;
-//double kd_start = .05628;
-
-// Roberts half gains
-//double kp_start = .07937;
-//double ki_start = .05591;
-//double kd_start = .02814;
-
-// UMKC Quad half gains
-double kp_start = .0350;
-double ki_start = .0250;
-double kd_start = .0200;
-
-// Control Validation Program - Run 2, OK Gains
-//double kp_start = .2686;
-//double ki_start = .1143;
-//double kd_start = .1086;
-
-// Control Validation Program - Run 3, Vigorous Gains
-//double kp_start = .314;
-//double ki_start = .114;
-//double kd_start = .114;
-
-string control_type_message = "null";
-
 //---------------------------------------------------------------------------------------------------------------Step Input Timer
 int step_counter;
-#define NUM_STEPS 10
-#define STEP_SIZE 0.06
-#define INITIAL_DEFLECTION .3
+#define NUM_STEPS 6
+#define STEP_SIZE 0.1
+#define INITIAL_DEFLECTION 0
 
 //-------------------------------------------------------------------------------------------Loop timing (scheduler) Declarations
 
@@ -155,19 +101,12 @@ float msl = 0.0; // mean sea level altitue (ft) [should be close to 920ft for UM
 RCInput rcinput{}; const float input_range[2] = {1088,1940}; // range is the same for all channels
 
 // for PID tuning
-const float output_range[6][2] = {{-.05,.30},{2,-2},{-.185,.500},{-180,180},{-.1,.1},{-.1,.1}};
+const float output_range[6][2] = {{-.5,.5},{-.5,.5},{-.5,.5},{-.5,.5},{-.5,.5},{-.5,.5}};
 float coefficients[6][2];
 
 //---------------------------------------------------------------------------------------------------------------IMU Declarations
-#define DECLINATION -12.71 //magnetic declination for camp roberts
-//#define DECLINATION -10.33 //magnetic declination for Yuma Proving Ground
-//#define DECLINATION -10.09 //magnetic declination for Eloy AZ
-//#define DECLINATION 1.70 //magnetic declination for KC
-//#define DECLINATION 5.62 //Tampa Florida
-//#define DECLINATION -12.71 //magnetic declination for camp roberts
-//#define DECLINATION -10.33 //magnetic declination for Yuma Proving Ground
-//#define DECLINATION -10.09 //magnetic declination for Eloy AZ
-//#define DECLINATION 1.70 //magnetic declination for KC
+#define DECLINATION 1.70 //magnetic declination for KC
+//#define DECLINATION 12.71 //magnetic declination for camp roberts
 #define WRAP_THRESHOLD 160.00 // wrap threshold for wrap counter (yaw is +/-180, need to make it continuous
 // vars to hold mpu values
 float a_mpu[3] , a_mpu_ahrs[3];
@@ -186,14 +125,20 @@ float gyro_z_lsm_old[3] = {0,0,0};
 float gyro_z_mpu_old[3] = {0,0,0};
 
 //-------------------------------------------------------------------------------------------------------------Servo Declarations
-#define WINCH_RIGHT 1 // right hand winch servo, 1 is the servo rail position
-#define WINCH_LEFT 0 // left hand winch servo, 0 is the servo rail position
-#define MAX_DEFLECTION 0.500
-#define LINE_NEUTRAL 1.500
-#define LINE_OFFSET .30
-#define DEFLECTION_LIMIT .4
-float winch_right_cmd = 0;
-float winch_left_cmd = 0;
+#define THROTTLE 0 // throttle servo pin, 2 is the servo rail position
+#define STEER_LEFT 1 // left hand steering servo, 0 is the servo rail position
+#define STEER_RIGHT 2 // right hand steering servo, 1 is the servo rail position
+#define DIFFERENTIAL_FRONT 3
+#define DIFFERENTIAL_REAR 4
+#define GEAR 5
+#define LOW 1
+#define HIGH 2
+#define LOCK 2
+#define UNLOCK 1
+#define SERVO_NEUTRAL 1.500
+#define SATURATION .5
+float steer_cmd = 0;
+float throttle_cmd = 0;
 
 //--------------------------------------------------------------------------------------------------------------AHRS Declarations
 #define PI 3.14159
@@ -233,22 +178,11 @@ string status_gps_string = "no fix";
 //----------------------------------------------------------------------------------------------------------Waypoint Declarations
 double waypoints[50][3]; // waypoint array is 50x3
 //double target[2] = {35.7178528,-120.76411}; // from step input payload drop
-//double target[2] = {35.7185462, -120.763162} //simulated fixed heading
-//double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
-//double target[2] = {35.6414, -120.68810};
-//double target[2] = {33.397694,-114.273444};
-double target[2] = {35.7177763,-120.7634692}; // elbow waypoint
-//double target[2] = {35.7170617, -120.7645599};
-//double target[2] = {39.0068626,-94.5382487};
-//double target[2] = {32.791300, -111.434883}; //Eloy area 51 IP
-//double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
-//double target[2] = {28.3149810, -82.4437559};
-//double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
-//double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
+double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
 // these are used to format the filename string
-#define FILENAME_LENGTH 15
+#define FILENAME_LENGTH 12
 #define FILENAME_OFFSET 4
 // leave extra room for '.csv' and potential '-1', '-2', etc.
 char filename[FILENAME_LENGTH+6];
@@ -257,15 +191,11 @@ string file_location = "/home/pi/Navio2/C++/Examples/NewCode/LogFiles/";
 // function to check if file exists so that the filename can be dynamically changed
 bool file_exists(string name_of_file){
 	ifstream checkfile(name_of_file); // try to read from the file
-	return bool(checkfile);} // cast the result to bool, if file opens, this returns true (it exists)
+	return checkfile;} // cast the result to bool, if file opens, this returns true (it exists)
 
 int main( int argc , char *argv[])
 {
 	//----------------------------------------------------------------------------------------------------------------File Title Prefix
-	double kp = kp_start*.0175; // convert all 3 to radians
-	double ki = ki_start*.0175;
-	double kd = kd_start*.0175;
-	float ki_ndi = ki_ndi_start*.0175; // convert to radians
 	int multisine_counter = 0;
 	int parameter; // parameter is the argument passed in with the program call, create it here
 	char *logfile_prefix; // pointer to a character array which will contain the log_file prefix when using the -d parameter
@@ -368,7 +298,7 @@ int main( int argc , char *argv[])
 	// read in the waypoints file
 	ifs.open("/home/pi/Navio2/C++/Examples/NewCode/waypoints.csv");
 	if(ifs){
-		cout << endl << "Reading waypoints from file............" << endl;
+		cout << "Reading waypoints from file............" << endl;
 		cout << "lat\tlong\talt" << endl;
 		for(int i = 0 ; i < 50 ; i++ ){ // row iterator
 			for(int j = 0 ; j < 3 ; j++){ // column iterator
@@ -380,8 +310,8 @@ int main( int argc , char *argv[])
 				ifs >> waypoints[i][j];
 				}
 
-			}}
-/*		for(int i = 0 ; i < 50 ; i++){
+			}
+		for(int i = 0 ; i < 50 ; i++){
 			for(int j = 0 ; j < 3 ; j++){
 				if(waypoints[i][0]!=0){
 					cout << waypoints[i][j];
@@ -389,7 +319,7 @@ int main( int argc , char *argv[])
 						cout << ",";}}}
 				if(waypoints[i+1][0] != 0){
 					cout << endl;}}}
-*/
+
 	else{
 		cout << "Could not read waypoints" << endl;
 		if(heading_type = 'n'){
@@ -465,21 +395,46 @@ int main( int argc , char *argv[])
 	PWM pwm_out;
 	// create pwm output object and initialize right and left winch servos, stop execution if servos cannot be initialized
 	// NOTE!!! if the code is erroring out here, the first thing to check is to make sure that you are are running the code with sudo
-	if(!pwm_out.init(WINCH_RIGHT)){ // right hand side winch servo
+	if(!pwm_out.init(STEER_RIGHT)){ // right hand side winch servo
 		cout << "Cannot Initialize East Side Winch Servo" << endl;
 		cout << "Make sure you are root" << endl;
 		return EXIT_FAILURE;}
-	if(!pwm_out.init(WINCH_LEFT)){ // left hand side winch servo
+	if(!pwm_out.init(STEER_LEFT)){ // left hand side winch servo
 		cout << "Cannot Initialize West Side Winch Servo" << endl;
 		cout << "Make sure you are root" << endl;
 		return EXIT_FAILURE;}
+	if(!pwm_out.init(THROTTLE)){
+		cout << "Cannot Initialize Throttle Servo" << endl;
+		cout << "Make sure you are root" << endl;
+		return EXIT_FAILURE;}
+	if(!pwm_out.init(DIFFERENTIAL_FRONT)){ // left hand side winch servo
+		cout << "Cannot Initialize Throttle Servo" << endl;
+		cout << "Make sure you are root" << endl;
+		return EXIT_FAILURE;}
+	if(!pwm_out.init(DIFFERENTIAL_REAR)){ // left hand side winch servo
+		cout << "Cannot Initialize Throttle Servo" << endl;
+		cout << "Make sure you are root" << endl;
+		return EXIT_FAILURE;}
+	if(!pwm_out.init(GEAR)){ // left hand side winch servo
+		cout << "Cannot Initialize Throttle Servo" << endl;
+		cout << "Make sure you are root" << endl;
+		return EXIT_FAILURE;}
 	cout << "Enabling PWM output channels..........." << endl;
-	pwm_out.enable(WINCH_RIGHT); // both init() and enable() must be called to use the PWM output on a particular pin
-	pwm_out.enable(WINCH_LEFT);
+	pwm_out.enable(STEER_RIGHT); // both init() and enable() must be called to use the PWM output on a particular pin
+	pwm_out.enable(STEER_LEFT);
+	pwm_out.enable(THROTTLE);
+	pwm_out.enable(DIFFERENTIAL_FRONT);
+	pwm_out.enable(DIFFERENTIAL_REAR);
+	pwm_out.enable(GEAR);
 	cout << "Setting PWM period for 50Hz............" << endl;
-	pwm_out.set_period(WINCH_RIGHT , 50); // set the PWM frequency to 50Hz
-	pwm_out.set_period(WINCH_LEFT , 50);
+	pwm_out.set_period(STEER_RIGHT , 50); // set the PWM frequency to 50Hz
+	pwm_out.set_period(STEER_LEFT , 50);
+	pwm_out.set_period(THROTTLE , 50);
+	pwm_out.set_period(DIFFERENTIAL_FRONT , 50);
+	pwm_out.set_period(DIFFERENTIAL_REAR , 50);
+	pwm_out.set_period(GEAR , 50);
 	cout << "  --PWM Output successfully enabled-- " << endl;
+	pwm_out.set_duty_cycle(THROTTLE, SERVO_NEUTRAL);
 	//--------------------------------------------------------------------------------------------------------------ADC Initialization
 	cout << "Initializing ADC......................." << endl;
 	ADC adc{};
@@ -555,9 +510,6 @@ int main( int argc , char *argv[])
 			return EXIT_FAILURE;}}
 	else{ // gps is good!
 		cout << "  --GPS successfully initialized--    " << endl;}
-	cout << "Initializing Serial Output............" << endl;
-	int serialHandle = serialOpen("/dev/ttyAMA0", 9600);
-	cout << "--Serial Output successfully opened --" << endl;
 
 	//------------------------------------------------------------------------------------------------------------------Welcome Message
 	usleep(500000);
@@ -575,18 +527,23 @@ int main( int argc , char *argv[])
 	while(true)
 	{
 		int standby_message_timer = 0; // used to limit the frequency of the standby message
-		while(!(adc_array[4] > 4000)){
 //		while(!((rc_array[5]>1500)&&(adc_array[4]<4000))){
-//bool temp_flag = false; // uncomment for testing with no transmitter
-//while(!temp_flag){ // uncomment for testing with no transmitter
+bool temp_flag = false; // uncomment for testing with no transmitter
+while(!temp_flag){ // uncomment for testing with no transmitter
 			if(standby_message_timer > 250){
 				cout << endl << "---------------------------------------" << endl << "           Autopilot Inactive         " << endl;
 				cout << "  Dynamic Lines at Neutral Deflection " << endl;
 				cout << "         Waiting for Killswitch       " << endl << "--------------------------------------" << endl;
 				standby_message_timer = 0;}
 			// when the autopilot is inactive, set both winches to the neutral deflection
-			pwm_out.set_duty_cycle(WINCH_RIGHT, LINE_NEUTRAL);
-			pwm_out.set_duty_cycle(WINCH_LEFT, LINE_NEUTRAL);
+			pwm_out.set_duty_cycle(STEER_RIGHT, SERVO_NEUTRAL);
+			pwm_out.set_duty_cycle(STEER_LEFT, SERVO_NEUTRAL);
+			pwm_out.set_duty_cycle(THROTTLE, SERVO_NEUTRAL);
+
+			//pwm_out.set_duty_cycle(DIFFERENTIAL_FRONT, LOCK);
+			//pwm_out.set_duty_cycle(DIFFERENTIAL_REAR, LOCK);
+			//pwm_out.set_duty_cycle(GEAR, LOW);
+
 			// since this loop executes based on an rc and an adc condition, we have to poll these devices for new status
 			rc_array[5] = rcinput.read(5);
 			adc_array[4] = adc.read(4);
@@ -596,13 +553,12 @@ int main( int argc , char *argv[])
 			usleep(5000);
 			standby_message_timer++; // increment the message delay timer
 			// everything that needs to be set to zero by the killswitch goes here
-			time_sweep = 0;
 			multisine_counter = 0; // time counter for the multisine input
 			yaw_mpu_integrated = 0; // integrated yaw
 			yaw_mpu_integrated_previous = 0;
 			yaw_lsm_integrated = 0;
 			yaw_lsm_integrated_previous = 0;
-//			wind_level_index = 0; // wind level for navigation, can only be incremented by the main loop to avoid "waypoint indecision"
+			wind_level_index = 0; // wind level for navigation, can only be incremented by the main loop to avoid "waypoint indecision"
 			for(int i = 0 ; i < 3 ; i++){
 				gyro_z_lsm_old[i] = 0;
 				gyro_z_mpu_old[i] = 0;
@@ -610,7 +566,7 @@ int main( int argc , char *argv[])
 			yaw_error_sum       = 0; // prevent integral wind up
 			yaw_error           = 0;
 			yaw_error_previous  = 0;
-//temp_flag = true; // uncomment for testing with no transmitter
+temp_flag = true; // uncomment for testing with no transmitter
 
 		}
 		time_t result = time(NULL);
@@ -670,14 +626,11 @@ int main( int argc , char *argv[])
 			"a_mpu[0],a_mpu[1],a_mpu[2],a_lsm[0],a_lsm[1],a_lsm[2],"
 			"g_mpu[0],g_mpu[1],g_mpu[2],g_lsm[0],g_lsm[1],g_lsm[2],"
 			"m_mpu[0],m_mpu[1],m_mpu[2],m_lsm[0],m_lsm[1],m_lsm[2],"
-			"winch_right_cmd,winch_left_cmd,yaw_integrated_mpu,yaw_integrated_lsm,"
-			"A,B,C,wn,zeta,kp,ki,kd,"
-			"yaw_desired,yaw_error,yaw_error_previous,yaw_error_rate,yaw_error_sum,adc_array[5],control_type,heading_type,"
+			"steer_cmd,throttle_cmd,"
 			"time_gps,lat,lng,alt_ellipsoid,msl_gps,horz_accuracy,vert_accuracy,"
-			"status_gps,lat_waypoint,lng_waypoint" << endl;
+			"status_gps" << endl;
 		usleep(20000);
 		//everything that needs to be set to zero by the killswitch goes here
-		time_sweep = 0;
 		multisine_counter = 0;
 		yaw_mpu_integrated = 0;
 		yaw_mpu_integrated_previous = 0;
@@ -693,9 +646,8 @@ int main( int argc , char *argv[])
 		num_wraps = 0;
 		yaw_prev = 0;
 
-	while(adc_array[4] > 4000)
 //	while((rc_array[5]>1500)&&(adc_array[4]<4000))
-//while(true)
+while(true)
 	{
 		// refresh time now to prepare for another loop execution
 		gettimeofday(&time_obj, NULL); // must first update the time_obj
@@ -709,12 +661,9 @@ int main( int argc , char *argv[])
 			dt = time_now-timer[0];
 			dt = dt/1000000.0; // convert from useconds
 
-			if(wind_level_index<49){
+			if(waypoints[wind_level_index][0] != 0){
 				if(msl_gps < waypoints[wind_level_index][2]){
 					wind_level_index++;}}
-			if(wind_level_index>1){
-				if(msl_gps > waypoints[wind_level_index][2]){
-					wind_level_index--;}}
 
 			// Tested sampling rate for IMUs, with both IMUs execution of the following block was taking
 			// approximate 1300us (~750Hz), slowed this loop down ot 500Hz so that there is a little
@@ -742,11 +691,6 @@ int main( int argc , char *argv[])
 			ahrs_lsm_mahony.updateMahony(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,m_lsm[0],m_lsm[1],m_lsm[2],dt);
 			ahrs_mpu_madgwick.updateMadgwick(a_mpu_ahrs[0],a_mpu_ahrs[1],a_mpu_ahrs[2],g_mpu_ahrs[0]*0.0175,g_mpu_ahrs[1]*0.0175,g_mpu_ahrs[2]*0.0175,m_mpu[0],m_mpu[1],m_mpu[2],dt);
 			ahrs_lsm_madgwick.updateMadgwick(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,m_lsm[0],m_lsm[1],m_lsm[2],dt);
-			//uncomment for non-global framed ahrs (no magnetometer)
-//			ahrs_mpu_mahony.updateMahonyIMU(a_mpu_ahrs[0],a_mpu_ahrs[1],a_mpu_ahrs[2],g_mpu_ahrs[0]*0.0175,g_mpu_ahrs[1]*0.0175,g_mpu_ahrs[2]*0.0175,dt);
-//			ahrs_lsm_mahony.updateMahonyIMU(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,dt);
-//			ahrs_mpu_madgwick.updateMadgwickIMU(a_mpu_ahrs[0],a_mpu_ahrs[1],a_mpu_ahrs[2],g_mpu_ahrs[0]*0.0175,g_mpu_ahrs[1]*0.0175,g_mpu_ahrs[2]*0.0175,dt);
-//			ahrs_lsm_madgwick.updateMadgwickIMU(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,dt);
 
 			// update the que holding the old gyro values with the new gyro information
 			gyro_z_mpu_old[2] = gyro_z_mpu_old[1];
@@ -783,7 +727,7 @@ int main( int argc , char *argv[])
         	       		lat = pos_data[2]/10000000.00000;
 	        	        alt_ellipsoid = (pos_data[3]/1000.00000)*3.28;
 		               	msl_gps = (pos_data[4]/1000.00000)*3.28;
-//				msl_gps = 500+step_counter*400; //uncomment to test navigation algorithm
+				//msl_gps = 2500-step_counter*160; //uncomment to test navigation algorithm
         		        horz_accuracy = (pos_data[5]/1000.00000)*3.28;
 	                	vert_accuracy = (pos_data[6]/1000.00000)*3.28;
 			}
@@ -830,22 +774,7 @@ int main( int argc , char *argv[])
 			for(int i = 0 ; i < ARRAY_SIZE(adc_array) ; i++){
 				adc_array[i] = adc.read(i);}
 
-			//-----------------------------------------------------------------------------------------------------------------PWM Output
-			// these are kept here for reference purposes only, the winch commands are further down inside this same loop now
-			// these winch positions represent minimum line lengths (maximum deflection)
-				//winch_right_cmd = LINE_NEUTRAL+MAX_DEFLECTION;
-				//winch_left_cmd = LINE_NEUTRAL+MAX_DEFLECTION;
-			// these represent maximum line release (minimum line pull, minimum deflection)
-				//winch_right_cmd = LINE_NEUTRAL - MAX_DEFLECTION;
-				//winch_left_cmd = LINE_NEUTRAL - MAX_DEFLECTION;
-			// PWM neutral position
-				//winch_right_cmd = LINE_NEUTRAL;
-				//winch_left_cmd = LINE_NEUTRAL;
-			// RC control, both servos on roll stick
-				//winch_right_cmd = LINE_NEUTRAL + rc_array_scaled[0];
-				//winch_left_cmd  = LINE_NEUTRAL + rc_array_scaled[0];
-
-			//------------------------------------------------------------------------------------------------AHRS Euler Angle Conversion
+			//------------------------------------------------------------------------------------------------------Euler Angle Conversion
 			ahrs_mpu_mahony.getEuler(&roll_mpu_mahony,&pitch_mpu_mahony,&yaw_mpu_mahony);
 			ahrs_lsm_mahony.getEuler(&roll_lsm_mahony,&pitch_lsm_mahony,&yaw_lsm_mahony);
 			ahrs_mpu_madgwick.getEuler(&roll_mpu_madgwick,&pitch_mpu_madgwick,&yaw_mpu_madgwick);
@@ -854,80 +783,6 @@ int main( int argc , char *argv[])
 			//----------------------------------------------------------------------------------------------------------------Controllers
 			float dt_control = time_now-timer[3]; // dt for this loop
 			dt_control = dt_control/1000000.0; // convert from useconds
-
-			// determine what type of heading we are going to used based on the configuration file (or default parameter in the code)
-			switch(heading_type){
-				case '1':
-					yaw_desired = 0; // North heading
-					heading_type_message = "Fixed - North";
-					break;
-				case '2':
-					yaw_desired = 90; // East heading
-					heading_type_message = "Fixed - East";
-					break;
-				case '3':
-					yaw_desired = 180; // South heading
-					heading_type_message = "Fixed - South";
-					break;
-				case '4':
-					yaw_desired = -90; // West heading
-					heading_type_message = "Fixed - West";
-					break;
-				case 'u':
-					yaw_desired = user_heading;
-					heading_type_message = "User " + to_string(user_heading);
-					break;
-				case 'c':
-					yaw_desired = rc_array_scaled[3]; // yaw stick
-					heading_type_message = "RC " + to_string(rc_array_scaled[3]);
-					yaw_desired = rc_array_scaled[3];
-					break;
-				case 's':
-					heading_type_message = "Step Input (altitude driven)";
-//					if(msl_gps > 1400){
-//						yaw_desired = user_heading;}
-//					if(msl_gps <= 1400){
-//						yaw_desired = user_heading + 90;}
-
-					if(msl_gps > 1700){
-						yaw_desired = user_heading;}
-					if(msl_gps <= 1700 && msl_gps > 1400){
-						yaw_desired = user_heading + 90;}
-					if(msl_gps <= 1400){
-						yaw_desired = user_heading + 180;}
-
-//					if(rc_array[2] > 1600){
-//						yaw_desired = 90;
-//					} else{
-//						yaw_desired = 0; // set yaw desired here
-					break;
-				case 'n':
-					heading_type_message = "Navigation Algorithm";
-					//write code to determine heading here
-					//lat_target
-					//lon_target
-					if(waypoints[wind_level_index][0] == 0)
-					{
-						yaw_desired = 100;
-					}else{
-						yaw_desired = atan2(waypoints[wind_level_index][1]-lng,waypoints[wind_level_index][0]-lat);
-						yaw_desired = (yaw_desired/.0175);
-					}
-					break;
-				case 'd':
-					heading_type_message = "Dumb Navigation";
-					yaw_desired = atan2(target[1]-lng,target[0]-lat);
-					yaw_desired = (yaw_desired/.0175);
-					break;
-				case 'f':
-					heading_type_message = "Frequency Sweep";
-					phi = wmin*time_sweep + c2*(wmax-wmin)*((total_time/c1)*exp(c1*time_sweep/total_time)-time_sweep);
-					yaw_desired = sweep_amp*sin(phi);
-					break;
-				default:
-					heading_type_message = "Default - North";
-					yaw_desired = 0;
-					break;}
 
 			// make yaw continuous instead of +/-180 using a wrap counter
 			if(yaw_mpu_madgwick > WRAP_THRESHOLD && yaw_prev < - WRAP_THRESHOLD){
@@ -938,143 +793,36 @@ int main( int argc , char *argv[])
 			}
 
 			// account for magnetic declination
-			yaw_mpu_mahony = yaw_mpu_mahony - DECLINATION;
-			yaw_lsm_mahony = yaw_lsm_mahony - DECLINATION;
-			yaw_mpu_madgwick = yaw_mpu_madgwick - DECLINATION;
-			yaw_lsm_madgwick = yaw_lsm_madgwick - DECLINATION;
+			yaw_mpu_mahony = yaw_mpu_mahony + DECLINATION;
+			yaw_lsm_mahony = yaw_lsm_mahony + DECLINATION;
+			yaw_mpu_madgwick = yaw_mpu_madgwick + DECLINATION;
+			yaw_lsm_madgwick = yaw_lsm_madgwick + DECLINATION;
 
+			// actuator saturation, steering motors
+			if(steer_cmd > SERVO_NEUTRAL + SATURATION){
+				steer_cmd = SERVO_NEUTRAL + SATURATION;}
+			else if(steer_cmd < SERVO_NEUTRAL - SATURATION){
+				steer_cmd = SERVO_NEUTRAL - SATURATION;}
 
-			// calculate yaw error for controller
-			yaw_prev              = yaw_mpu_madgwick;
-			yaw_error_previous    = yaw_error;
-			yaw_error             = yaw_desired -(yaw_mpu_madgwick+(360*num_wraps));
-			yaw_error_rate        = (yaw_error - yaw_error_previous)/dt_control;
-			yaw_error_sum         = (((yaw_error + yaw_error_previous)*dt_control)/2) + yaw_error_sum;
-
-			// saturate the yaw error sum as a reasonable value
-			if(yaw_error_sum > 150){
-				yaw_error_sum = 150;
-			} if(yaw_error_sum < -150){
-				yaw_error_sum = -150;
-			}
-
-			// hack to avoid changing the variable name "t" in the multisine
-			float t = time_now*1e-6;
-
-			// gains are modified live according to rc transmitter stick positions
-			if(live_gains){
-				kp    =  (kp_start+rc_array_scaled[2])*(.0175);
-				ki    =  (ki_start+rc_array_scaled[3])*(.0175);
-				kd    =  (kd_start+rc_array_scaled[0])*(.0175);
-				wn    =  wn_start+rc_array_scaled[2];
-				zeta  =  zeta_start+rc_array_scaled[1];
-				ki_ndi = ki_ndi_start+rc_array_scaled[3];}
-			else{
-				kp = kp_start*.0175;
-				ki = ki_start*.0175;
-				kd = kd_start*.0175;
-				wn = wn_start;
-				zeta = zeta_start;
-				ki_ndi = ki_ndi_start;}
-
-			// control type is determined by configuration parameter from file (or default in code)
-			switch(control_type){
-				case 'p':
-					control_type_message = "PID";
-					//if(rc_array[4] > 1500){
-					if(0){
-						winch_right_cmd = LINE_NEUTRAL + (kp*yaw_error + ki*yaw_error_sum + kd*yaw_error_rate);
-						winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
-					} else {
-						winch_left_cmd = LINE_NEUTRAL + (kp*yaw_error + ki*yaw_error_sum + kd*yaw_error_rate);
-						winch_right_cmd = LINE_NEUTRAL - LINE_OFFSET;}
-					break;
-				case 'n':
-					control_type_message = "NDI";
-					winch_right_cmd = LINE_NEUTRAL - (1/B)*(-2*zeta*wn*g_mpu[2]-A*g_mpu[2]+wn*wn*(yaw_desired-(yaw_mpu_madgwick+360*num_wraps))*.0175)-(C/B)+ki_ndi*yaw_error_sum;
-					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
-					break;
-				case 'r': // minimum deflection, for rigging
-					control_type_message = "minimum deflection";
-					winch_right_cmd = LINE_NEUTRAL + MAX_DEFLECTION;
-					winch_left_cmd = LINE_NEUTRAL - MAX_DEFLECTION;
-					break;
-				case 'g': // glide, both lines pulled
-					control_type_message = "glide, no spin";
-					winch_right_cmd = LINE_NEUTRAL - LINE_OFFSET;
-					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
-					break;
-				case 's': // input sweep
-					control_type_message = "input sweep";
-					if(rc_array[4] > 1500){
-						if(step_counter >= 0){
-							winch_right_cmd = LINE_NEUTRAL+INITIAL_DEFLECTION - step_counter*STEP_SIZE;}
-						else{
-							winch_right_cmd = LINE_NEUTRAL;}
-						winch_left_cmd = LINE_NEUTRAL+LINE_OFFSET;
-					} else{
-						if(step_counter>=0){
-							winch_left_cmd = LINE_NEUTRAL-INITIAL_DEFLECTION + step_counter*STEP_SIZE;}
-						else{
-							winch_left_cmd = LINE_NEUTRAL;}
-						winch_right_cmd = LINE_NEUTRAL-LINE_OFFSET;}
-					break;
-				case 'c': // rc control
-					control_type_message = "RC control";
-					//for RC control, throttle is left servo, elevator is right servo, down on the sticks is line pull
-					winch_right_cmd = LINE_NEUTRAL + rc_array_scaled[2];
-					//winch_left_cmd = LINE_NEUTRAL - rc_array_scaled[2];
-					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
-					break;
-				case 'm': // multisine
-					control_type_message = "Multisine";
-					// multisine or step input, only enable when switch D is in the 1 or 2 position
-					if(rc_array[4] > 1500) // switch A 0 for left, 1 for right
-					{
-						if(multisine_counter < 61){
-							// right winch is dynamic, left winch is static
-							winch_right_cmd = (LINE_NEUTRAL-LINE_OFFSET-.04*(sin(.2094*t-0.6111)+sin(.4189*t-1.3593)+sin(0.8976*t-.8035)+sin(2.0944*t+2.6684)+sin(2.8274*t-1.2069)+sin(3.7699*t+2.8186)+sin(4.7124*t-.8956)+sin(5.3407*t+1.8869)+sin(6.2832*t+2.1591)));
-							winch_left_cmd = LINE_NEUTRAL+LINE_OFFSET;}
-						else{
-							// after 60 seconds disable both and return to servo neutral
-							winch_right_cmd = LINE_NEUTRAL;
-							winch_left_cmd = LINE_NEUTRAL;}
-					} else	{
-						// apply the same things to the left hand side if the switch is down (0 position)
-						if(multisine_counter < 61){
-							winch_left_cmd = LINE_NEUTRAL+LINE_OFFSET+.04*(sin(.2094*t-0.6111)+sin(.4189*t-1.3593)+sin(0.8976*t-.8035)+sin(2.0944*t+2.6684)+sin(2.8274*t-1.2069)+sin(3.7699*t+2.8186)+sin(4.7124*t-.8956)+sin(5.3407*t+1.8869)+sin(6.2832*t+2.1591));
-							winch_right_cmd = LINE_NEUTRAL-LINE_OFFSET;}
-						else{
-							winch_right_cmd = LINE_NEUTRAL;
-							winch_left_cmd = LINE_NEUTRAL;}}
-					break;
-				default:
-					// default is PWM neutral
-					control_type_message = "Default, PWM neutral";
-					winch_right_cmd = LINE_NEUTRAL;
-					winch_left_cmd  = LINE_NEUTRAL;
-					break;}
-
-			// this is kept here for reference only
-			// These are the correct directions in which to apply the offsets for line pull (glide)
-			//cout << "Default active" << endl;
-			//winch_right_cmd = LINE_NEUTRAL-LINE_OFFSET;
-			//winch_left_cmd  = LINE_NEUTRAL+LINE_OFFSET;
-
-			// actuator saturation, right side
-			if(winch_right_cmd > LINE_NEUTRAL + DEFLECTION_LIMIT){
-				winch_right_cmd = LINE_NEUTRAL + DEFLECTION_LIMIT;}
-			else if(winch_right_cmd < LINE_NEUTRAL - DEFLECTION_LIMIT){
-				winch_right_cmd = LINE_NEUTRAL - DEFLECTION_LIMIT;}
-			// actuator saturation, left side
-			if(winch_left_cmd > LINE_NEUTRAL + DEFLECTION_LIMIT){
-				winch_left_cmd = LINE_NEUTRAL + DEFLECTION_LIMIT;}
-			else if(winch_left_cmd < LINE_NEUTRAL - DEFLECTION_LIMIT){
-				winch_left_cmd = LINE_NEUTRAL - DEFLECTION_LIMIT;}
+			steer_cmd = SERVO_NEUTRAL + (step_counter * STEP_SIZE) - INITIAL_DEFLECTION;
+//			steer_cmd = SERVO_NEUTRAL + rc_array_scaled[0];
+			throttle_cmd = SERVO_NEUTRAL - rc_array_scaled[1];
 
 			// always write the duty cycle, change control type by changing the switch case parameter
-			pwm_out.set_duty_cycle(WINCH_RIGHT, winch_right_cmd);
-			pwm_out.set_duty_cycle(WINCH_LEFT, winch_left_cmd);
+			pwm_out.set_duty_cycle(STEER_RIGHT, steer_cmd);
+			pwm_out.set_duty_cycle(STEER_LEFT, steer_cmd);
+			pwm_out.set_duty_cycle(THROTTLE, throttle_cmd);
+
+			if(rc_array_scaled[4] > .2){
+				pwm_out.set_duty_cycle(DIFFERENTIAL_FRONT, UNLOCK);
+				pwm_out.set_duty_cycle(DIFFERENTIAL_REAR, UNLOCK);}
+			else{
+				pwm_out.set_duty_cycle(DIFFERENTIAL_FRONT, LOCK);
+				pwm_out.set_duty_cycle(DIFFERENTIAL_REAR, LOCK);}
+			if(rc_array_scaled[5] > .2){
+				pwm_out.set_duty_cycle(GEAR, HIGH);}
+			else{
+				pwm_out.set_duty_cycle(GEAR, LOW);}
 
 			//-------------------------------------------------------------------------------------------------------Data Log File Output
 			fout << today << "," << time_now << "," << msl << ",";
@@ -1089,39 +837,9 @@ int main( int argc , char *argv[])
 			fout << a_mpu[0] << "," << a_mpu[1] << "," << a_mpu[2] << "," << a_lsm[0] << "," << a_lsm[1] << ",";
 			fout << a_lsm[2] << "," << g_mpu[0] << "," << g_mpu[1] << "," << g_mpu[2] << "," << g_lsm[0] << "," << g_lsm[1] << ",";
 			fout << g_lsm[2] << "," << m_mpu[0] << "," << m_mpu[1] << "," << m_mpu[2] << "," << m_lsm[0] << "," << m_lsm[1] << "," << m_lsm[2] << ",";
-			fout << winch_right_cmd << "," << winch_left_cmd << ","  << yaw_mpu_integrated_degrees << ",";
-			fout << yaw_lsm_integrated_degrees << "," << A << "," << B << "," << C << ",";
-			fout << wn << "," << zeta << "," << kp << "," << ki << "," << kd << ",";
-			fout << yaw_desired << "," <<  yaw_error << "," << yaw_error_previous << "," << yaw_error_rate << ",";
-			fout << yaw_error_sum << "," << adc_array[5] << "," << control_type << "," << heading_type << ",";
+			fout << steer_cmd << "," << throttle_cmd << ",";
 			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << ",";
-			fout << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << ",";
-			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << endl;;
-
-/*			// Serial Output to help with payload recovery
-			if((int(time_gps) % 4) ==  0){
-				serialPrintf(serialHandle, "--Payload 4--\nGPS Position:\n");
-				serialPrintf(serialHandle, to_string(lat).c_str());
-				serialPrintf(serialHandle, "(deg), ");
-				serialPrintf(serialHandle, to_string(lng).c_str());
-				serialPrintf(serialHandle, "(deg)\nAltitude: ");
-				serialPrintf(serialHandle, to_string(msl_gps).c_str());
-				serialPrintf(serialHandle, "(ft)\n\n");
-			}
-
-
-*/
-
-			if(time_sweep <= total_time)
-			{
-				time_sweep = time_sweep + .01;
-			}
-			else
-			{
-				yaw_desired = 0;
-			}
-
-
+			fout << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << endl;
 
 			watcher[3] = time_now - timer[3]; // used to check loop frequency
 			timer[3] = time_now;
@@ -1211,19 +929,9 @@ int main( int argc , char *argv[])
 				cout << "Euler Angles (Madgwick): " << "(dt = " << dt << ")" << endl;
 				cout << "MPU9250: Roll: " << roll_mpu_madgwick << " Pitch: " << pitch_mpu_madgwick << " Yaw: " << yaw_mpu_madgwick << endl;
 				cout << "LSM9DS1: Roll: " << roll_lsm_madgwick << " Pitch: " << pitch_lsm_madgwick << " Yaw: " << yaw_lsm_madgwick << endl;
-				cout << "Integrated Yaw (fallback):" << " MPU9250 Yaw: " << yaw_mpu_integrated_degrees << " LSM9DS1 Yaw: " << yaw_lsm_integrated_degrees << endl;
 
-				cout << "Right Winch: " << winch_right_cmd << " Left Winch: " << winch_left_cmd << " Servo Current: " << (adc_array[5]-2500)/66 << endl;
+				cout << "Steer: " << steer_cmd << " Throttle: " << throttle_cmd << endl;
 
-				cout << "Control Type: " << control_type_message << endl;
-
-				cout << "System ID, A: " << A << " B: " << B << " C: " << C;
-				cout << " NDI, wn: " << wn << " zeta: " << zeta << " ki_ndi: " << ki_ndi;
-				cout << " PID, kp: " << kp << " ki: " << ki << " kd: " << kd << endl;
-				cout << "Heading type: " << heading_type_message << endl;
-				cout << "Yaw Desired: " << yaw_desired << " Yaw Error: " << yaw_error << " Yaw Error Rate: " << yaw_error_rate << " Yaw Error Sum: " << yaw_error_sum << endl;
-				cout << "Proportional: " <<  kp*yaw_error << " integral: " << ki*yaw_error_sum << " derivative: " << kd*yaw_error_rate << endl;
-				cout << "Number of wraps: " << num_wraps;
 				cout << " Step counter: " << step_counter << endl;
 				multisine_counter++;}
 
@@ -1236,18 +944,6 @@ int main( int argc , char *argv[])
 				for(int i = 0 ; i < NUM_LOOPS ; i++){
 					cout << "For " << frequency[i] << "(Hz) loop, expected: " << duration[i] << "(us), actual: " << watcher[i] << endl;}}
 //dbmsg_local = false;
-
-			// Serial Output to help with payload recovery
-			if(((int(time_gps)-3) % 10) ==  0){
-				serialPrintf(serialHandle, "--Payload 1--\nGPS Position:\n");
-				serialPrintf(serialHandle, to_string(lat).c_str());
-				serialPrintf(serialHandle, "(deg), ");
-				serialPrintf(serialHandle, to_string(lng).c_str());
-				serialPrintf(serialHandle, "(deg)\nAltitude: ");
-				serialPrintf(serialHandle, to_string(msl_gps).c_str());
-				serialPrintf(serialHandle, "(ft)\n\n");
-			}
-
 
 			watcher[8] = time_now - timer[8]; // used to check loop frequency
 			timer[8] = time_now;
