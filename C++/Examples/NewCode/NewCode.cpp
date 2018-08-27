@@ -32,15 +32,6 @@
 
 using namespace std;
 
-float time_sweep = 0;
-const float total_time = 120;
-const float sweep_amp = 60;
-float phi = 0;
-float wmin = .6;
-float wmax = 60;
-float c1 = 4;
-float c2 = .0187;
-
 //---------------------------------------------------------------------------------------------------User Configurable Parameters
 const bool dbmsg_global = false; // set flag to display all debug messages
 bool dbmsg_local  = false; // change in the code at a specific location to view local messages only
@@ -49,6 +40,12 @@ char heading_type = 'd'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc contr
 float user_heading = 115; //degress, only used if us is the heading type
 bool live_gains = false;
 
+//----------------------------------------------------------------------------------------------------------------------New Stuff
+const float final_heading = 0; // must be set manually for into the wind
+//float yaw_l_desired; // will be rate limited for maximum turning rate circular paths
+const float max_degrees_per_sample = 1; // corresponds to 100 degrees per second;
+const float radius_of_max_turn = .00001; // corresponds to about a 50ft. turn radius
+float yaw_l_desired_prev = 0;
 
 //------------------------------------------------------------------------------------------------------------System ID Variables
 float A           = -0.7391;
@@ -63,11 +60,19 @@ float ki_ndi_start = .005;
 //-------------------------------------------------------------------------------------------------------Common Control Variables
 float yaw_desired    = 0;
 string heading_type_message = "null";
-float yaw_error      = 0 , yaw_error_previous = 0;
+float yaw_error      = 0;
+float yaw_error_previous = 0;
 float yaw_error_sum  = 0;
 float yaw_error_rate = 0;
 int num_wraps = 0;
 float yaw_prev = 0;
+
+float yaw_l_desired    = 0;
+float yaw_l_error      = 0;
+float yaw_l_error_previous = 0;
+float yaw_l_error_sum  = 0;
+float yaw_l_error_rate = 0;
+float yaw_l_prev = 0;
 
 //------------------------------------------------------------------------------------------------------------------PID Variables
 // 8:15 gains - starting point
@@ -91,14 +96,9 @@ float yaw_prev = 0;
 //double kd_start = .05628;
 
 // Roberts half gains
-//double kp_start = .07937;
-//double ki_start = .05591;
-//double kd_start = .02814;
-
-// UMKC Quad half gains
-double kp_start = .0350;
-double ki_start = .0250;
-double kd_start = .0200;
+double kp_start = .07937;
+double ki_start = .05591;
+double kd_start = .02814;
 
 // Control Validation Program - Run 2, OK Gains
 //double kp_start = .2686;
@@ -160,11 +160,6 @@ float coefficients[6][2];
 
 //---------------------------------------------------------------------------------------------------------------IMU Declarations
 #define DECLINATION -12.71 //magnetic declination for camp roberts
-//#define DECLINATION -10.33 //magnetic declination for Yuma Proving Ground
-//#define DECLINATION -10.09 //magnetic declination for Eloy AZ
-//#define DECLINATION 1.70 //magnetic declination for KC
-//#define DECLINATION 5.62 //Tampa Florida
-//#define DECLINATION -12.71 //magnetic declination for camp roberts
 //#define DECLINATION -10.33 //magnetic declination for Yuma Proving Ground
 //#define DECLINATION -10.09 //magnetic declination for Eloy AZ
 //#define DECLINATION 1.70 //magnetic declination for KC
@@ -237,18 +232,13 @@ double waypoints[50][3]; // waypoint array is 50x3
 //double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
 //double target[2] = {35.6414, -120.68810};
 //double target[2] = {33.397694,-114.273444};
-double target[2] = {35.7177763,-120.7634692}; // elbow waypoint
-//double target[2] = {35.7170617, -120.7645599};
-//double target[2] = {39.0068626,-94.5382487};
-//double target[2] = {32.791300, -111.434883}; //Eloy area 51 IP
-//double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
-//double target[2] = {28.3149810, -82.4437559};
 //double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
 //double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
+double target[2] = {35.7163752, -120.7635108}; // CR in front of vehicle hangar
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
 // these are used to format the filename string
-#define FILENAME_LENGTH 15
+#define FILENAME_LENGTH 12
 #define FILENAME_OFFSET 4
 // leave extra room for '.csv' and potential '-1', '-2', etc.
 char filename[FILENAME_LENGTH+6];
@@ -257,7 +247,7 @@ string file_location = "/home/pi/Navio2/C++/Examples/NewCode/LogFiles/";
 // function to check if file exists so that the filename can be dynamically changed
 bool file_exists(string name_of_file){
 	ifstream checkfile(name_of_file); // try to read from the file
-	return bool(checkfile);} // cast the result to bool, if file opens, this returns true (it exists)
+	return checkfile;} // cast the result to bool, if file opens, this returns true (it exists)
 
 int main( int argc , char *argv[])
 {
@@ -575,7 +565,7 @@ int main( int argc , char *argv[])
 	while(true)
 	{
 		int standby_message_timer = 0; // used to limit the frequency of the standby message
-		while(!(adc_array[4] > 4000)){
+		while(!(adc_array[4] < 4000)){
 //		while(!((rc_array[5]>1500)&&(adc_array[4]<4000))){
 //bool temp_flag = false; // uncomment for testing with no transmitter
 //while(!temp_flag){ // uncomment for testing with no transmitter
@@ -596,7 +586,6 @@ int main( int argc , char *argv[])
 			usleep(5000);
 			standby_message_timer++; // increment the message delay timer
 			// everything that needs to be set to zero by the killswitch goes here
-			time_sweep = 0;
 			multisine_counter = 0; // time counter for the multisine input
 			yaw_mpu_integrated = 0; // integrated yaw
 			yaw_mpu_integrated_previous = 0;
@@ -674,10 +663,11 @@ int main( int argc , char *argv[])
 			"A,B,C,wn,zeta,kp,ki,kd,"
 			"yaw_desired,yaw_error,yaw_error_previous,yaw_error_rate,yaw_error_sum,adc_array[5],control_type,heading_type,"
 			"time_gps,lat,lng,alt_ellipsoid,msl_gps,horz_accuracy,vert_accuracy,"
-			"status_gps,lat_waypoint,lng_waypoint" << endl;
+			"status_gps,lat_waypoint,lng_waypoint,"
+			"yaw_l_desired,yaw_l_error,yaw_l_error_previous,yaw_l_error_rate,yaw_l_error_sum,"
+			"final_heading,max_degrees_per_sample" << endl;
 		usleep(20000);
 		//everything that needs to be set to zero by the killswitch goes here
-		time_sweep = 0;
 		multisine_counter = 0;
 		yaw_mpu_integrated = 0;
 		yaw_mpu_integrated_previous = 0;
@@ -693,7 +683,7 @@ int main( int argc , char *argv[])
 		num_wraps = 0;
 		yaw_prev = 0;
 
-	while(adc_array[4] > 4000)
+	while(adc_array[4] < 4000)
 //	while((rc_array[5]>1500)&&(adc_array[4]<4000))
 //while(true)
 	{
@@ -919,10 +909,45 @@ int main( int argc , char *argv[])
 					yaw_desired = atan2(target[1]-lng,target[0]-lat);
 					yaw_desired = (yaw_desired/.0175);
 					break;
-				case 'f':
-					heading_type_message = "Frequency Sweep";
-					phi = wmin*time_sweep + c2*(wmax-wmin)*((total_time/c1)*exp(c1*time_sweep/total_time)-time_sweep);
-					yaw_desired = sweep_amp*sin(phi);
+				case 'p':
+					heading_type_message = "Dubin's Path Generation";
+					if( abs(yaw_mpu_madgwick - final_heading) > 240) // connect cw-ccw circles
+					{
+						yaw_l_desired = atan2(waypoints[wind_level_index][1]-lng,waypoints[wind_level_index][0]-lat);
+						yaw_l_desired = (yaw_l_desired/.0175);
+//						cout << " cw-ccw ";
+					}
+					else if( ((yaw_mpu_madgwick - final_heading) >= -240) && ((yaw_mpu_madgwick - final_heading) <= 0) ) // connect cw dcircles
+					{
+						yaw_l_desired = atan2(waypoints[wind_level_index][1]-lng,waypoints[wind_level_index][0]-lat);
+						yaw_l_desired = yaw_l_desired - asin((2*radius_of_max_turn)/sqrt(pow((waypoints[wind_level_index][1] - lng),2) + pow((waypoints[wind_level_index][0] - lat),2)));
+						yaw_l_desired = (yaw_l_desired/.0175);
+//						cout << " cw ";
+					}
+					else if( ((yaw_mpu_madgwick - final_heading) > 0) && ((yaw_mpu_madgwick - final_heading) <= 240) ) // connect ccw circles
+					{
+						yaw_l_desired = atan2(waypoints[wind_level_index][1]-lng,waypoints[wind_level_index][0]-lat);
+
+						float arg = pow(lng-waypoints[wind_level_index][1],2)+pow(lat-waypoints[wind_level_index][0],2);
+//						cout << "1 - " << arg << endl;
+						arg = sqrt(arg);
+//						cout << "2 - " << arg << endl;
+						arg = (2*radius_of_max_turn)/arg;
+//						cout << "3 - " << arg << endl;
+						arg = asin(arg);
+//						cout << "4 - " << arg << endl;
+
+//						yaw_l_desired = yaw_l_desired + asin((2*radius_of_max_turn)/sqrt(pow((lng - waypoints[wind_level_index][1]),2) + pow((lat - waypoints[wind_level_index][0]),2)));
+
+						yaw_l_desired = yaw_l_desired + arg;
+
+						yaw_l_desired = (yaw_l_desired/.0175);
+//						cout << " ccw ";
+					}
+					if( msl_gps < 1300 )
+					{
+//						yaw_l_desired = final_heading;
+					}
 					break;
 				default:
 					heading_type_message = "Default - North";
@@ -944,6 +969,27 @@ int main( int argc , char *argv[])
 			yaw_lsm_madgwick = yaw_lsm_madgwick - DECLINATION;
 
 
+//			cout << yaw_l_desired << endl;
+
+
+			if((yaw_l_desired_prev - yaw_l_desired) > max_degrees_per_sample)
+			{
+//				cout << yaw_l_desired << " - " ;
+				yaw_l_desired = yaw_l_desired - max_degrees_per_sample;
+//				cout << yaw_l_desired << endl;
+			}
+			else if((yaw_l_desired_prev - yaw_l_desired) < -max_degrees_per_sample)
+			{
+//				cout << yaw_l_desired << " - ";
+				yaw_l_desired = yaw_l_desired + max_degrees_per_sample;
+//				cout << yaw_l_desired << endl;
+			}
+
+			yaw_l_desired_prev = yaw_l_desired;
+
+
+
+
 			// calculate yaw error for controller
 			yaw_prev              = yaw_mpu_madgwick;
 			yaw_error_previous    = yaw_error;
@@ -951,11 +997,28 @@ int main( int argc , char *argv[])
 			yaw_error_rate        = (yaw_error - yaw_error_previous)/dt_control;
 			yaw_error_sum         = (((yaw_error + yaw_error_previous)*dt_control)/2) + yaw_error_sum;
 
+
+			// yaw error for rate limited control
+			yaw_l_prev	     = yaw_mpu_madgwick;
+			yaw_l_error_previous = yaw_l_error;
+			yaw_l_error	     = yaw_l_desired - (yaw_mpu_madgwick+(360*num_wraps));
+			yaw_l_error_rate     = (yaw_l_error - yaw_l_error_previous)/dt_control;
+			yaw_l_error_sum	     = (((yaw_l_error + yaw_l_error_previous)*dt_control)/2) + yaw_l_error_sum;
+
+
+
 			// saturate the yaw error sum as a reasonable value
 			if(yaw_error_sum > 150){
 				yaw_error_sum = 150;
 			} if(yaw_error_sum < -150){
 				yaw_error_sum = -150;
+			}
+
+			// saturation block for rate limited yaw
+			if(yaw_l_error_sum > 150){
+				yaw_error_sum = 150;
+			} if(yaw_l_error_sum < -150){
+				yaw_l_error_sum = -150;
 			}
 
 			// hack to avoid changing the variable name "t" in the multisine
@@ -1048,6 +1111,15 @@ int main( int argc , char *argv[])
 							winch_right_cmd = LINE_NEUTRAL;
 							winch_left_cmd = LINE_NEUTRAL;}}
 					break;
+				case 'l': // rate limited (maximum turn rate dynamics)
+					control_type_message = "Rate Limited";
+					if(0){
+						winch_right_cmd = LINE_NEUTRAL + (kp*yaw_l_error + ki*yaw_l_error_sum + kd*yaw_l_error_rate);
+						winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
+					} else {
+						winch_left_cmd = LINE_NEUTRAL + (kp*yaw_l_error + ki*yaw_l_error_sum + kd*yaw_l_error_rate);
+						winch_right_cmd = LINE_NEUTRAL - LINE_OFFSET;}
+					break;
 				default:
 					// default is PWM neutral
 					control_type_message = "Default, PWM neutral";
@@ -1096,7 +1168,9 @@ int main( int argc , char *argv[])
 			fout << yaw_error_sum << "," << adc_array[5] << "," << control_type << "," << heading_type << ",";
 			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << ",";
 			fout << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << ",";
-			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << endl;;
+			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << ",";
+			fout << yaw_l_desired << "," <<  yaw_l_error << "," << yaw_l_error_previous << "," << yaw_l_error_rate << ",";
+			fout << yaw_l_error_sum << endl;;
 
 /*			// Serial Output to help with payload recovery
 			if((int(time_gps) % 4) ==  0){
@@ -1108,20 +1182,7 @@ int main( int argc , char *argv[])
 				serialPrintf(serialHandle, to_string(msl_gps).c_str());
 				serialPrintf(serialHandle, "(ft)\n\n");
 			}
-
-
 */
-
-			if(time_sweep <= total_time)
-			{
-				time_sweep = time_sweep + .01;
-			}
-			else
-			{
-				yaw_desired = 0;
-			}
-
-
 
 			watcher[3] = time_now - timer[3]; // used to check loop frequency
 			timer[3] = time_now;
@@ -1224,8 +1285,12 @@ int main( int argc , char *argv[])
 				cout << "Yaw Desired: " << yaw_desired << " Yaw Error: " << yaw_error << " Yaw Error Rate: " << yaw_error_rate << " Yaw Error Sum: " << yaw_error_sum << endl;
 				cout << "Proportional: " <<  kp*yaw_error << " integral: " << ki*yaw_error_sum << " derivative: " << kd*yaw_error_rate << endl;
 				cout << "Number of wraps: " << num_wraps;
-				cout << " Step counter: " << step_counter << endl;
-				multisine_counter++;}
+				cout << " Step counter: " << step_counter << endl << endl;
+				multisine_counter++;
+
+				cout << "Yaw Limited Desired: " << yaw_l_desired << endl << endl;
+
+				}
 
 //			cout << tse << " - " << time_start << " = " << time_now << endl;
 
@@ -1239,7 +1304,7 @@ int main( int argc , char *argv[])
 
 			// Serial Output to help with payload recovery
 			if(((int(time_gps)-3) % 10) ==  0){
-				serialPrintf(serialHandle, "--Payload 1--\nGPS Position:\n");
+				serialPrintf(serialHandle, "--Payload 3--\nGPS Position:\n");
 				serialPrintf(serialHandle, to_string(lat).c_str());
 				serialPrintf(serialHandle, "(deg), ");
 				serialPrintf(serialHandle, to_string(lng).c_str());
