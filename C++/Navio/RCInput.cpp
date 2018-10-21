@@ -11,7 +11,6 @@
 
 RCInput::RCInput()
 {
-
 }
 
 RCInput::~RCInput()

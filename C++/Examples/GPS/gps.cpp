@@ -79,7 +79,7 @@ int main(int argc, char *argv[]){
                 // to increase internal receiver frequency
             }
 
-/*            if (gps.decodeSingleMessage(Ublox::NAV_STATUS, pos_data) == 1)
+           if (gps.decodeSingleMessage(Ublox::NAV_STATUS, pos_data) == 1)
             {
                 printf("Current GPS status:\n");
                 printf("gpsFixOk: %d\n", ((int)pos_data[1] & 0x01));
@@ -121,7 +121,7 @@ int main(int argc, char *argv[]){
             } else {
                 // printf("Status Message not captured\n");
             }
-*/
+
 
             usleep(2);
         }

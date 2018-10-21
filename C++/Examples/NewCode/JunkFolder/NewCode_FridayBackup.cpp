@@ -66,7 +66,7 @@ bool live_gains = true;
 
 //---------------------------------------------------------------------------------------------------------------Step Input Timer
 int step_counter;
-#define NUM_STEPS 60
+#define NUM_STEPS 2
 #define STEP_SIZE 0.01
 #define INITIAL_DEFLECTION .3
 

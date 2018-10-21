@@ -2,6 +2,8 @@
 
 #include <cstddef>
 
+#define NUM_CHANNELS 6
+
 class RCInput 
 {
 public:
@@ -13,7 +15,6 @@ public:
 
 private:
     int open_channel(int ch);
-
-    static const size_t CHANNEL_COUNT = 6;
+    static const size_t CHANNEL_COUNT = NUM_CHANNELS;
     int channels[CHANNEL_COUNT];
 };

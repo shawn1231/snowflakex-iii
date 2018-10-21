@@ -1,8 +1,4 @@
-l
+f
 p
 0
-<<<<<<< HEAD
-payload4-CampRoberts-Friday-071318-UMKC-X50-12lb-75percentGains_steering
-=======
-payload1-08272018_Monday_DubinsTest1
->>>>>>> e645812a35a763817beb1373a92dd3c4cc44ce9d
+payload4-FreqSweepTest
