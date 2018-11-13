@@ -4,6 +4,7 @@
 #include "Navio/herrington_utils.h"
 #include "Navio/testing.h"
 #include "Navio/vehicle.h"
+#include "Navio/digital_filter.h"
 
 // log file includes
 #include <fstream>
@@ -37,7 +38,40 @@
 
 using namespace std;
 
+int m_order = 2;
+char m_type = 'l';
+float m_fc  = 2; //hz
+float m_fs  = 100; //hz
+
+digital_filter reference_model(m_order, m_type, m_fc, m_fs);
+
+const float l1 = .2;
+const float l2 = .2;
+const float kp_outer_loop = 1;
+const float ki_outer_loop = 0;
+
+float p1 = 0;
+float p2 = 0;
+float p1_d = 0;
+float p2_d = 0;
+
+float error_outer_loop = 0;
+float error_sum_outer_loop = 0;
+float yaw_rate_desired = 0;
+float yaw_rate_model = 0;
+float cmd_adapt = 0;
+float error_model = 0;
+
+//---------------------------------------------------------------------------------------Step Generator (Eloy version) Parameters
 float out = 0;
+
+const int step = 1;
+const int plus_minus = 0;
+const int multi_step = 1;
+const float des_period = 10;
+const float des_amp = .35;
+const int num_steps_mg = 3;
+const float des_delay = 5;
 
 // log file location (relative path)
 std::string file_location = "./LogFiles/";
@@ -52,8 +86,8 @@ wrapped_variable continuous_yaw(360,160);
 //---------------------------------------------------------------------------------------------------User Configurable Parameters
 const bool dbmsg_global = false; // set flag to display all debug messages
 bool dbmsg_local  = false; // change in the code at a specific location to view local messages only
-char control_type = 'x'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
-char heading_type = 'x'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm, d=dumb navigation
+char control_type = 'p'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
+char heading_type = 'u'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm, d=dumb navigation
 float user_heading = 115; //degress, only used if us is the heading type
 bool live_gains = false;
 string filename_str = "";
@@ -176,7 +210,7 @@ float gyro_z_mpu_old[3] = {0,0,0};
 #define WINCH_LEFT 0 // left hand winch servo, 0 is the servo rail position
 #define MAX_DEFLECTION 0.500 // saturation command limits signal to LINE_NEUTRAL+/-MAX_DEFLECTION
 #define LINE_NEUTRAL 1.500 // center point for the actuator, range is 1.000-2.000
-#define LINE_OFFSET .30 // think this was used when glide was applied by the "static" actuator after initialization
+#define LINE_OFFSET .055 // think this was used when glide was applied by the "static" actuator after initialization
 #define DEFLECTION_LIMIT .4 // not sure what this is?
 float winch_right_cmd = 0;
 float winch_left_cmd = 0;
@@ -223,11 +257,11 @@ double waypoints[50][3]; // waypoint array is 50x3
 //double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
 //double target[2] = {35.6414, -120.68810};
 //double target[2] = {33.397694,-114.273444};
-//double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
+double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
 //double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
 //double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
 //double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
-double target[2] = {35.7163752, -120.7635108}; // CR in front of vehicle hangar
+//double target[2] = {35.7163752, -120.7635108}; // CR in front of vehicle hangar
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
 
@@ -248,10 +282,10 @@ PI_THREAD (decodeGPS)
 	else{ // gps is good!
 		cout << "  --GPS successfully initialized--    " << endl;}
 	while(true)
-	{		
+	{
 		if (gps.decodeSingleMessage(Ublox::NAV_POSLLH, pos_data) == 1)
 		{
-			piLock(GPSKEY);	
+			piLock(GPSKEY);
 			time_gps = pos_data[0]/1000.00000;
 			lng = pos_data[1]/10000000.00000;
 			lat = pos_data[2]/10000000.00000;
@@ -262,11 +296,12 @@ PI_THREAD (decodeGPS)
 			piUnlock(GPSKEY);
 		}
 		if (gps.decodeSingleMessage(Ublox::NAV_STATUS, pos_data) == 1)
-		{	
-			piLock(GPSKEY);	
+		{
+			piLock(GPSKEY);
  			status_gps = (int)pos_data[0];
 			piUnlock(GPSKEY);
 		}
+
 	}
 }
 
@@ -288,7 +323,7 @@ int main( int argc , char *argv[])
 	double kd = kd_start*.0175;
 	// float ki_ndi = ki_ndi_start*.0175; // convert to radians
 	int multisine_counter = 0;
-	
+
 	//--------------------------------------------------------------------------------------------------Read and Handle Program Options
 	int parameter; // parameter is the argument passed in with the program call, create it here
 	char *logfile_prefix; // pointer to a character array which will contain the log_file prefix when using the -d parameter
@@ -328,13 +363,23 @@ int main( int argc , char *argv[])
 	cout << endl << MSG_BAR << endl;
 	cout << "         Begin Initialiation           ";
 	cout << endl << MSG_BAR << endl;
-	
+
 	// create an object of type vehicle called parachute
 	vehicle parachute;
+/*
+	parachute.pwm_out.init(0);
+	parachute.pwm_out.init(1);
+
+	parachute.pwm_out.enable(0);
+	parachute.pwm_out.enable(1);
+
+	parachute.pwm_out.set_period(0,50);
+	parachute.pwm_out.set_period(1,50);
+*/
 
 	// loop scheduler variables have been moved to scheduler class
 	// barometer initialization moved to barometer class
-	
+
 	parachute.timer.update_time();
 
 	// rc initialization has been moved to remote_control class
@@ -382,7 +427,7 @@ int main( int argc , char *argv[])
 		offset_lsm[0] -= g_lsm[0];
 		offset_lsm[1] -= g_lsm[1];
 		offset_lsm[2] -= g_lsm[2];
-		
+
 		//wait a bit before reading gyro again
 		usleep(10000);}
 	cout << "Calculating gyroscope offsets.........." << endl;
@@ -411,13 +456,13 @@ int main( int argc , char *argv[])
 	cout << "-Magnetometer rotations stored in AHRS-" << endl;
 
 	//---------------------------------------------------------------------------------------------------------------GPS Initialization
-	
+
 	// NOTE:  GPS initialization moved to threaded function to avoid scoping issues
-	
+
 	int wind_level_index = 0;
-	
-	piThreadCreate(decodeGPS);		
-		
+
+	piThreadCreate(decodeGPS);
+
 	//------------------------------------------------------------------------------------------------------------Serial Initialization
 	cout << "Initializing Serial Output............" << endl;
 	int serialHandle = serialOpen("/dev/ttyAMA0", 9600);
@@ -446,18 +491,25 @@ int main( int argc , char *argv[])
 			if(standby_message_timer > 250){
 				cout << endl << "---------------------------------------" << endl << "           Autopilot Inactive         " << endl;
 				cout << "  Dynamic Lines at Neutral Deflection " << endl;
+				cout << "       Battery Voltage:  " << adc_array[2]/100 << " V" << endl;
 				cout << "         Waiting for Killswitch       " << endl << "--------------------------------------" << endl;
 				standby_message_timer = 0;}
 			// when the autopilot is inactive, set both winches to the neutral deflection
+//			cout << "\t" << LINE_NEUTRAL << endl;
+//			parachute.pwm_out.set_period(0,50);
+//			parachute.pwm_out.set_period(0,50);
+//			parachute.pwm_out.set_duty_cycle(0,1.5);
+//			parachute.pwm_out.set_duty_cycle(1,1.5);
 			parachute.pwm_out.set_duty_cycle(WINCH_RIGHT, LINE_NEUTRAL);
 			parachute.pwm_out.set_duty_cycle(WINCH_LEFT, LINE_NEUTRAL);
-			
+
 			// since this loop executes based on an rc and an adc condition, we have to poll these devices for new status
 			// rc_array[5] = parachute.rc.get_raw(5);
-			
+
 			parachute.rc.update();
-			
+
 			adc_array[4] = adc.read(4);
+			adc_array[2] = adc.read(2);
 			// step counter needs to be set to zero also, this is a hack because the numbering is messed up in the code
 			// we start at negative one here and presumably the counter is incremented before 1st execution
 			usleep(5000);
@@ -483,7 +535,7 @@ int main( int argc , char *argv[])
 		char *today = asctime(localtime(&result));
 		cout << filename_str << endl;
 		filename_str = generate_filename(logfile_prefix_string);
-		
+
 		// create the file output stream object
 		ofstream fout;
 		// open the file
@@ -510,12 +562,19 @@ int main( int argc , char *argv[])
 			"time_gps,lat,lng,alt_ellipsoid,msl_gps,horz_accuracy,vert_accuracy,status_gps,status_gps_string,"
 			"lat_waypoint,lng_waypoint,"
 			"yaw_l_desired,yaw_l_error,yaw_l_error_previous,yaw_l_error_rate,yaw_l_error_sum,"
+			"l1,l2,kp_outer_loop,ki_outer_loop,error_outer_loop,error_sum_error_outer_loop,yaw_rate_desired,yaw_rate_model,cmd_adapt,error_model"
+			"p1,p2,p1_d,p2_d"
 			<< endl;
 		usleep(20000);
 		//everything that needs to be set to zero by the killswitch goes here
 		continuous_yaw.reset_wrap_counter();
 		time_sweep = 0;
 		multisine_counter = 0;
+
+		error_outer_loop = 0;
+		error_sum_outer_loop = 0;
+		yaw_rate_desired = 0;
+		cmd_adapt = 0;
 
 		for(int i = 0 ; i < 3 ; i++){
 			gyro_z_lsm_old[i] = 0;
@@ -538,7 +597,7 @@ int main( int argc , char *argv[])
 		time_now   = tse - time_start; // calculate the time since execution start by subtracting off tse */
 
 		parachute.timer.update_time();
-		
+
 		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(0)) > parachute.timer.get_duration(0))
 		{
 			//----------------------------------------------------------------------------------------------------------------AHRS Update
@@ -602,7 +661,18 @@ int main( int argc , char *argv[])
 		{
 
 			// testing maneuver generator at Natick AGU speed of 5Hz
-			out = maneuver_generator(0,1,1,8,.3,3,5);
+			out = maneuver_generator(step,plus_minus,multi_step,des_period,des_amp,num_steps_mg,des_delay);
+
+//			if(msl_gps < 2700)
+//			{
+//				heading_type = 'd'; // dumb nav
+//				control_type = 'p'; // PID
+//			}
+//			else
+//			{
+//				heading_type = 'x'; // default north
+//				control_type = 's'; // sweep (set for mstep)
+//			}
 
 			parachute.timer.update_watcher(2); // used to check loop frequency
 			parachute.timer.update_timer(2);
@@ -610,9 +680,9 @@ int main( int argc , char *argv[])
 
 		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(3)) > parachute.timer.get_duration(3))
 		{
-			
+
 			piLock(GPSKEY);
-			
+
 			// decode GPS status at 100 Hz, no need to do this in the thread, also causes scope problems
 			switch(status_gps){
 				case 0x00:
@@ -637,7 +707,9 @@ int main( int argc , char *argv[])
 					status_gps_string = "Reserved value. Current state unknown";
 					break;
 			}
-			
+
+			piUnlock(GPSKEY);
+
 			// barometer read placed inside barometer class
 			parachute.baro.update_sensor();
 
@@ -687,6 +759,7 @@ int main( int argc , char *argv[])
 					yaw_desired = parachute.rc.get_scaled(3);
 					break;
 				case 's': // Tuesday 8/28 Payload3 heading control steps %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+					piLock(GPSKEY);
 					heading_type_message = "Step Input (altitude driven)";
 //					if(msl_gps > 1400){
 //						yaw_desired = user_heading;}
@@ -705,8 +778,11 @@ int main( int argc , char *argv[])
 //						yaw_desired = 90;
 //					} else{
 //						yaw_desired = 0; // set yaw desired here
+
+					piUnlock(GPSKEY);
 					break;
 				case 'n':
+					piLock(GPSKEY);
 					heading_type_message = "Navigation Algorithm";
 					//write code to determine heading here
 					//lat_target
@@ -718,13 +794,17 @@ int main( int argc , char *argv[])
 						yaw_desired = atan2(waypoints[wind_level_index][1]-lng,waypoints[wind_level_index][0]-lat);
 						yaw_desired = (yaw_desired/.0175);
 					}
+					piUnlock(GPSKEY);
 					break;
 				case 'd':
+					piLock(GPSKEY);
 					heading_type_message = "Dumb Navigation";
 					yaw_desired = atan2(target[1]-lng,target[0]-lat);
 					yaw_desired = (yaw_desired/.0175);
+					piUnlock(GPSKEY);
 					break;
 				case 'p':
+					piLock(GPSKEY);
 					heading_type_message = "Dubin's Path Generation";
 					if( abs(yaw_mpu_madgwick - final_heading) > 240) // connect cw-ccw circles
 					{
@@ -763,6 +843,7 @@ int main( int argc , char *argv[])
 					{
 //						yaw_l_desired = final_heading;
 					}
+					piUnlock(GPSKEY);
 					break;
 				default:
 					heading_type_message = "Default - North";
@@ -848,8 +929,40 @@ int main( int argc , char *argv[])
 			}
 			// control type is determined by configuration parameter from file (or default in code)
 			switch(control_type){
+				case 'a':
+					control_type_message = "Adaptive (MRAC) Rate Control";
+
+					// outer loop error
+					error_outer_loop = yaw_desired - yaw_mpu_madgwick;
+					error_sum_outer_loop = error_sum_outer_loop + error_outer_loop * dt_control;
+
+					// outer loop controller
+					yaw_rate_desired = kp_outer_loop * error_outer_loop + ki_outer_loop * error_sum_outer_loop;
+
+					// pass desired yaw through the model
+					yaw_rate_model = reference_model.filter_new_input(yaw_rate_desired);
+
+					//MRAC control law
+					cmd_adapt = p1*yaw_rate_desired + p2;
+
+					// error for adaptation
+					error_model = g_mpu[2] - yaw_rate_model;
+
+					// derivative of gains
+					p1_d = -l1*yaw_rate_desired*error_model;
+					p2_d = -l2*error_model;
+
+					// adapt the gains
+					p1 = p1 + p1_d * dt_control;
+					p2 = p2 + p2_d * dt_control;
+
+					winch_left_cmd = LINE_NEUTRAL - cmd_adapt;
+					winch_right_cmd = LINE_NEUTRAL + LINE_OFFSET;
+//					winch_right_cmd = LINE_NEUTRAL + cmd_adapt;
+
+					break;
 				case 'f': // Frequency Sweep successfully bench tested 9/21/18
-					control_type_message = "Frequency Sweep"; 
+					control_type_message = "Frequency Sweep";
 					 phi = wmin*time_sweep + c2*(wmax - wmin)*((total_time/c1)*exp(c1*time_sweep/total_time) - time_sweep);
 					if (time_sweep <= total_time){
 					time_sweep = time_sweep + 0.01;}
@@ -890,7 +1003,7 @@ int main( int argc , char *argv[])
 						winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
 					} else {
 						winch_left_cmd = LINE_NEUTRAL + (kp*yaw_error + ki*yaw_error_sum + kd*yaw_error_rate);
-						winch_right_cmd = LINE_NEUTRAL - LINE_OFFSET;}
+						winch_right_cmd = LINE_NEUTRAL + LINE_OFFSET;}
 					break;
 				case 'r': // minimum deflection, for rigging
 					control_type_message = "minimum deflection";
@@ -992,13 +1105,23 @@ int main( int argc , char *argv[])
 			fout << winch_right_cmd << "," << winch_left_cmd << ","  ;
 			fout << kp << "," << ki << "," << kd << ",";
 			fout << yaw_desired << "," <<  yaw_error << "," << yaw_error_previous << "," << yaw_error_rate << "," << yaw_error_sum << ",";
-			fout << control_type << "," << heading_type << ",";		
-			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << "," << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << "," << status_gps_string << ",";
-			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << ",";
-			fout << yaw_l_desired << "," <<  yaw_l_error << "," << yaw_l_error_previous << "," << yaw_l_error_rate << "," << yaw_l_error_sum << endl;
+			fout << control_type << "," << heading_type << ",";
 
+			piLock(GPSKEY);
+			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << "," << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << "," << status_gps_string << ",";
 			piUnlock(GPSKEY);
-			
+
+			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << ",";
+			fout << yaw_l_desired << "," <<  yaw_l_error << "," << yaw_l_error_previous << "," << yaw_l_error_rate << "," << yaw_l_error_sum;
+
+			fout << l1 << "," << l2 << "," << kp_outer_loop << "," << ki_outer_loop << "," << error_outer_loop << ",";
+			fout << error_sum_outer_loop << "," << yaw_rate_desired << "," << yaw_rate_model << "," << cmd_adapt << ",";
+			fout << error_model << "," << p1 << "," << p2 << "," << p1_d << "," << p2_d;
+
+			fout << endl;
+
+
+
 			parachute.timer.update_watcher(3); // used to check loop frequency
 			parachute.timer.update_timer(3);
 		}
@@ -1059,7 +1182,7 @@ int main( int argc , char *argv[])
 				cout << " Magnetometer: " << m_lsm[0] << " " << m_lsm[1] << " " << m_lsm[2] << endl;
 
 				piLock(GPSKEY);
-				
+
 				cout << "GPS Status: " << status_gps_string << " GPS Time: " << time_gps << endl;
 				cout << "Lat: ";
 				cout << setprecision(9) <<  lat;
@@ -1071,7 +1194,7 @@ int main( int argc , char *argv[])
 				cout << "Horz accuracy: " << horz_accuracy << " ft\t"  << " Vert Accuracy: " << vert_accuracy << " ft" << endl;
 
 				piUnlock(GPSKEY);
-				
+
 				cout << "Euler Angles (Mahony): " << "(dt = " << dt << ")" <<endl;
 				cout << "MPU9250: Roll: " << roll_mpu_mahony << " Pitch: " << pitch_mpu_mahony << " Yaw: " << yaw_mpu_mahony << endl;
 				cout << "LSM9DS1: Roll: " << roll_lsm_mahony << " Pitch: " << pitch_lsm_mahony << " Yaw: " << yaw_lsm_mahony << endl;
@@ -1102,9 +1225,9 @@ int main( int argc , char *argv[])
 //dbmsg_local = false;
 
 			// Serial Output to help with payload recovery
-			if(((int(time_gps)-4) % 10) ==  0){
+			if(((int(time_gps)-2) % 10) ==  0){
 				cout << "Blasting serial" << endl;
-				serialPrintf(serialHandle, "--Payload 4--\nGPS Position:\n");
+				serialPrintf(serialHandle, "--Payload 2--\nGPS Position:\n");
 				serialPrintf(serialHandle, to_string(lat).c_str());
 				serialPrintf(serialHandle, "(deg), ");
 				serialPrintf(serialHandle, to_string(lng).c_str());
