@@ -967,7 +967,8 @@ int main( int argc , char *argv[])
 					p1 = p1 + p1_d * dt_control;
 					p2 = p2 + p2_d * dt_control;
 
-					winch_left_cmd = LINE_NEUTRAL - cmd_adapt;
+//					winch_left_cmd = LINE_NEUTRAL - cmd_adapt;
+					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
 					winch_right_cmd = LINE_NEUTRAL + LINE_OFFSET;
 //					winch_right_cmd = LINE_NEUTRAL + cmd_adapt;
 
