@@ -1,4 +1,4 @@
-x
-x
+a
+u
 0
-payload1-Roberts11_magcal
+payload1-Roberts11_Wed_AfterMagCal

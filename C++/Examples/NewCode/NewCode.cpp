@@ -38,6 +38,8 @@
 
 using namespace std;
 
+float dt_control = 0;
+
 int m_order = 2;
 char m_type = 'l';
 float m_fc  = 2; //hz
@@ -45,8 +47,10 @@ float m_fs  = 100; //hz
 
 digital_filter reference_model(m_order, m_type, m_fc, m_fs);
 
-const float l1 = .003;
-const float l2 = .003;
+//const float l1 = .003;
+//const float l2 = .003;
+const float l1 = .0003;
+const float l2 = .0003;
 const float kp_outer_loop = 1;
 const float ki_outer_loop = 0;
 
@@ -522,9 +526,12 @@ int main( int argc , char *argv[])
 			error_outer_loop = 0;
 			error_sum_outer_loop = 0;
 			yaw_rate_desired = 0;
+			error_model = 0;
 			cmd_adapt = 0;
 			p1 = .017;
 			p2 = 0;
+			p1_d = 0;
+			p2_d = 0;
 
 
 //			wind_level_index = 0; // wind level for navigation, can only be incremented by the main loop to avoid "waypoint indecision"
@@ -570,7 +577,7 @@ int main( int argc , char *argv[])
 			"time_gps,lat,lng,alt_ellipsoid,msl_gps,horz_accuracy,vert_accuracy,status_gps,status_gps_string,"
 			"lat_waypoint,lng_waypoint,"
 			"yaw_l_desired,yaw_l_error,yaw_l_error_previous,yaw_l_error_rate,yaw_l_error_sum,"
-			"l1,l2,kp_outer_loop,ki_outer_loop,error_outer_loop,error_sum_error_outer_loop,yaw_rate_desired,yaw_rate_model,cmd_adapt,error_model,"
+			"l1,l2,kp_outer_loop,ki_outer_loop,error_outer_loop,error_sum_outer_loop,yaw_rate_desired,yaw_rate_model,cmd_adapt,error_model,"
 			"p1,p2,p1_d,p2_d"
 			<< endl;
 		usleep(20000);
@@ -583,8 +590,11 @@ int main( int argc , char *argv[])
 		error_sum_outer_loop = 0;
 		yaw_rate_desired = 0;
 		cmd_adapt = 0;
+		error_model = 0;
 		p1 = .017;
 		p2 = 0;
+		p1_d = 0;
+		p2_d = 0;
 
 
 		for(int i = 0 ; i < 3 ; i++){
@@ -739,8 +749,14 @@ int main( int argc , char *argv[])
 			ahrs_lsm_madgwick.getEuler(&roll_lsm_madgwick,&pitch_lsm_madgwick,&yaw_lsm_madgwick);
 
 			//----------------------------------------------------------------------------------------------------------------Controllers
-			float dt_control = parachute.timer.get_current_time()-parachute.timer.get_timer(3); // dt for this loop
+//			float dt_control = parachute.timer.get_current_time()-parachute.timer.get_timer(3); // dt for this loop
+			dt_control = parachute.timer.get_current_time()-parachute.timer.get_timer(3);
 			dt_control = dt_control/1000000.0; // convert from useconds
+			if(abs(dt_control) > 100)
+			{
+				dt_control = 0;
+			}
+//			cout << endl << dt_control << endl;
 
 			// determine what type of heading we are going to used based on the configuration file (or default parameter in the code)
 			switch(heading_type){
@@ -943,6 +959,8 @@ int main( int argc , char *argv[])
 				case 'a':
 					control_type_message = "Adaptive (MRAC) Rate Control";
 
+//					cout << endl << dt_control << endl;
+
 					// outer loop error
 					error_outer_loop = yaw_desired - continuous_yaw.get_current_continuous();
 					error_sum_outer_loop = error_sum_outer_loop + error_outer_loop * dt_control;
@@ -967,8 +985,12 @@ int main( int argc , char *argv[])
 					p1 = p1 + p1_d * dt_control;
 					p2 = p2 + p2_d * dt_control;
 
-//					winch_left_cmd = LINE_NEUTRAL - cmd_adapt;
-					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
+					cout << endl;
+					cout << "p1 = " << p1 << "\tp2 = " << p2 << endl;
+					cout << "p1_d*dt_control = " << p1_d*dt_control << "\tp2_d*dt_control = " << p2_d*dt_control << endl;
+
+					winch_left_cmd = LINE_NEUTRAL + cmd_adapt;
+//					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
 					winch_right_cmd = LINE_NEUTRAL + LINE_OFFSET;
 //					winch_right_cmd = LINE_NEUTRAL + cmd_adapt;
 
