@@ -519,6 +519,14 @@ int main( int argc , char *argv[])
 			time_sweep = 0;
 			multisine_counter = 0; // time counter for the multisine input
 
+			error_outer_loop = 0;
+			error_sum_outer_loop = 0;
+			yaw_rate_desired = 0;
+			cmd_adapt = 0;
+			p1 = .017;
+			p2 = 0;
+
+
 //			wind_level_index = 0; // wind level for navigation, can only be incremented by the main loop to avoid "waypoint indecision"
 			for(int i = 0 ; i < 3 ; i++){
 				gyro_z_lsm_old[i] = 0;
@@ -562,7 +570,7 @@ int main( int argc , char *argv[])
 			"time_gps,lat,lng,alt_ellipsoid,msl_gps,horz_accuracy,vert_accuracy,status_gps,status_gps_string,"
 			"lat_waypoint,lng_waypoint,"
 			"yaw_l_desired,yaw_l_error,yaw_l_error_previous,yaw_l_error_rate,yaw_l_error_sum,"
-			"l1,l2,kp_outer_loop,ki_outer_loop,error_outer_loop,error_sum_error_outer_loop,yaw_rate_desired,yaw_rate_model,cmd_adapt,error_model"
+			"l1,l2,kp_outer_loop,ki_outer_loop,error_outer_loop,error_sum_error_outer_loop,yaw_rate_desired,yaw_rate_model,cmd_adapt,error_model,"
 			"p1,p2,p1_d,p2_d"
 			<< endl;
 		usleep(20000);
@@ -575,6 +583,9 @@ int main( int argc , char *argv[])
 		error_sum_outer_loop = 0;
 		yaw_rate_desired = 0;
 		cmd_adapt = 0;
+		p1 = .017;
+		p2 = 0;
+
 
 		for(int i = 0 ; i < 3 ; i++){
 			gyro_z_lsm_old[i] = 0;
@@ -1112,7 +1123,7 @@ int main( int argc , char *argv[])
 			piUnlock(GPSKEY);
 
 			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << ",";
-			fout << yaw_l_desired << "," <<  yaw_l_error << "," << yaw_l_error_previous << "," << yaw_l_error_rate << "," << yaw_l_error_sum;
+			fout << yaw_l_desired << "," <<  yaw_l_error << "," << yaw_l_error_previous << "," << yaw_l_error_rate << "," << yaw_l_error_sum << ",";
 
 			fout << l1 << "," << l2 << "," << kp_outer_loop << "," << ki_outer_loop << "," << error_outer_loop << ",";
 			fout << error_sum_outer_loop << "," << yaw_rate_desired << "," << yaw_rate_model << "," << cmd_adapt << ",";
