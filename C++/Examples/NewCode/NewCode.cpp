@@ -45,12 +45,12 @@ float m_fs  = 100; //hz
 
 digital_filter reference_model(m_order, m_type, m_fc, m_fs);
 
-const float l1 = .2;
-const float l2 = .2;
+const float l1 = .003;
+const float l2 = .003;
 const float kp_outer_loop = 1;
 const float ki_outer_loop = 0;
 
-float p1 = 0;
+float p1 = .017;
 float p2 = 0;
 float p1_d = 0;
 float p2_d = 0;
@@ -933,7 +933,7 @@ int main( int argc , char *argv[])
 					control_type_message = "Adaptive (MRAC) Rate Control";
 
 					// outer loop error
-					error_outer_loop = yaw_desired - yaw_mpu_madgwick;
+					error_outer_loop = yaw_desired - continuous_yaw.get_current_continuous();
 					error_sum_outer_loop = error_sum_outer_loop + error_outer_loop * dt_control;
 
 					// outer loop controller
@@ -946,7 +946,7 @@ int main( int argc , char *argv[])
 					cmd_adapt = p1*yaw_rate_desired + p2;
 
 					// error for adaptation
-					error_model = g_mpu[2] - yaw_rate_model;
+					error_model = g_mpu[2]*57.3 - yaw_rate_model;
 
 					// derivative of gains
 					p1_d = -l1*yaw_rate_desired*error_model;
