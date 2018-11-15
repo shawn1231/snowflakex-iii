@@ -212,10 +212,10 @@ float gyro_z_mpu_old[3] = {0,0,0};
 //-------------------------------------------------------------------------------------------------------------Servo Declarations
 #define WINCH_RIGHT 1 // right hand winch servo, 1 is the servo rail position
 #define WINCH_LEFT 0 // left hand winch servo, 0 is the servo rail position
-#define MAX_DEFLECTION 0.500 // saturation command limits signal to LINE_NEUTRAL+/-MAX_DEFLECTION
+#define MAX_DEFLECTION 0.2 // this is used for rigging
 #define LINE_NEUTRAL 1.500 // center point for the actuator, range is 1.000-2.000
 #define LINE_OFFSET .055 // think this was used when glide was applied by the "static" actuator after initialization
-#define DEFLECTION_LIMIT .4 // not sure what this is?
+#define DEFLECTION_LIMIT .15 // correction, this is used for saturation
 float winch_right_cmd = 0;
 float winch_left_cmd = 0;
 
@@ -985,9 +985,11 @@ int main( int argc , char *argv[])
 					p1 = p1 + p1_d * dt_control;
 					p2 = p2 + p2_d * dt_control;
 
-					cout << endl;
-					cout << "p1 = " << p1 << "\tp2 = " << p2 << endl;
-					cout << "p1_d*dt_control = " << p1_d*dt_control << "\tp2_d*dt_control = " << p2_d*dt_control << endl;
+//					cout << endl;
+//					cout << "p1 = " << p1 << "\tp2 = " << p2 << endl;
+//					cout << "p1_d*dt_control = " << p1_d*dt_control << "\tp2_d*dt_control = " << p2_d*dt_control << endl;
+
+					cmd_adapt = cmd_adapt/10000;
 
 					winch_left_cmd = LINE_NEUTRAL + cmd_adapt;
 //					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
