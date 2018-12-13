@@ -17,13 +17,13 @@ if __name__ == "__main__":
     ubl.configure_poll_port(navio.ublox.PORT_SERIAL1)
     ubl.configure_poll_port(navio.ublox.PORT_SERIAL2)
     ubl.configure_poll_port(navio.ublox.PORT_USB)
-    ubl.configure_solution_rate(rate_ms=1000)
+    ubl.configure_solution_rate(rate_ms=1,nav_rate=1)
 
     ubl.set_preferred_dynamic_model(None)
     ubl.set_preferred_usePPP(None)
 
     ubl.configure_message_rate(navio.ublox.CLASS_NAV, navio.ublox.MSG_NAV_POSLLH, 1)
-    ubl.configure_message_rate(navio.ublox.CLASS_NAV, navio.ublox.MSG_NAV_STATUS, 1)
+    ubl.configure_message_rate(navio.ublox.CLASS_NAV, navio.ublox.MSG_NAV_STATUS, 0)
     ubl.configure_message_rate(navio.ublox.CLASS_NAV, navio.ublox.MSG_NAV_SOL, 1)
     ubl.configure_message_rate(navio.ublox.CLASS_NAV, navio.ublox.MSG_NAV_VELNED, 1)
     ubl.configure_message_rate(navio.ublox.CLASS_NAV, navio.ublox.MSG_NAV_SVINFO, 1)

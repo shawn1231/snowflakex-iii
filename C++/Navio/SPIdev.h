@@ -3,7 +3,6 @@ SPIDev driver code is placed under the BSD license.
 Written by Mikhail Avkhimenia (mikhail.avkhimenia@emlid.com)
 Copyright (c) 2014, Emlid Limited
 All rights reserved.
-
 Redistribution and use in source and binary forms, with or without
 modification, are permitted provided that the following conditions are met:
     * Redistributions of source code must retain the above copyright
@@ -14,7 +13,6 @@ modification, are permitted provided that the following conditions are met:
     * Neither the name of the Emlid Limited nor the names of its contributors
       may be used to endorse or promote products derived from this software
       without specific prior written permission.
-
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -85,7 +83,6 @@ public:
 		for (int i = 0; i < length; i++)
 			printf("%x ", tx[i]);
 		printf("\n");
-
 		printf("Rx: ");
 		for (int i = 0; i < length; i++)
 			printf("%x ", rx[i]);

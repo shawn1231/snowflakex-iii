@@ -54,23 +54,29 @@ int main(int argc, char *argv[]){
         // this function waits for a message of a specified type and gets you just the information you need
         // In this example we decode NAV_STATUS and NAV-POSLLH messages, adding new types, however is quite easy
 
+	gps.configureSolutionRate(100);
+
         while (true)
         {
-			clock_start = clock();
+//		clock_start = clock();
             //if(gps.decodeMessages(Ublox::NAV_POSLLH, pos_data) == 1))
-			if (gps.decodeSingleMessage(Ublox::NAV_POSLLH, pos_data) == 1)
+		if (gps.decodeSingleMessage(Ublox::NAV_POSLLH, pos_data) == 1)
             {
                 // after desired message is successfully decoded, we can use the information stored in pos_data vector
                 // right here, or we can do something with it from inside decodeSingleMessage() function(see ublox.h).
                 // the way, data is stored in pos_data vector is specified in decodeMessage() function of class UBXParser(see ublox.h)
-                printf("GPS Millisecond Time of Week: %.0lf s\n", pos_data[0]/1000);
+//                printf("GPS Millisecond Time of Week: %.0lf s\n", pos_data[0]/1000);
                 printf("Longitude: %.9lf\n", pos_data[1]/10000000);
                 printf("Latitude: %.9lf\n", pos_data[2]/10000000);
-                printf("Height above Ellipsoid: %.3lf m\n", pos_data[3]/1000);
-                printf("Height above mean sea level: %.3lf m\n", pos_data[4]/1000);
-                printf("Horizontal Accuracy Estateimate: %.3lf m\n", pos_data[5]/1000);
-                printf("Vertical Accuracy Estateimate: %.3lf m\n", pos_data[6]/1000);
-				printf("Time for POS_LLH execution: %f\n",(float)(clock()-clock_start)/CLOCKS_PER_SEC);
+//                printf("Height above Ellipsoid: %.3lf m\n", pos_data[3]/1000);
+//                printf("Height above mean sea level: %.3lf m\n", pos_data[4]/1000);
+//               printf("Horizontal Accuracy Estateimate: %.3lf m\n", pos_data[5]/1000);
+//               printf("Vertical Accuracy Estateimate: %.3lf m\n", pos_data[6]/1000);
+		printf("Time for POS_LLH execution: %f\n",(float)(clock()-clock_start)/CLOCKS_PER_SEC);
+                printf("\n");
+		clock_start = clock();
+	    }
+/*
 
             } else {
                 //printf("0");
@@ -116,14 +122,15 @@ int main(int argc, char *argv[]){
 
                 }
 				printf("Time for NAV_STATUS execution: %f\n",(float)(clock()-clock_start)/CLOCKS_PER_SEC);
-                printf("\n");
+
+		printf("\n");
 
             } else {
                 // printf("Status Message not captured\n");
             }
+*/
 
-
-            usleep(2);
+//            usleep(2);
         }
 
     } else {

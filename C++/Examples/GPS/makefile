@@ -13,7 +13,7 @@ gps.o: gps.cpp
 	$(CXX) $(INCLUDES) $(CFLAGS) gps.cpp
 
 Ublox.o: $(NAVIO)/Ublox.cpp
-	$(CXX) $(INCLUDES) $(CFLAGS) $(NAVIO)/Ublox.cpp
+	$(CXX) $(INCLUDES) -Wno-psabi $(CFLAGS) $(NAVIO)/Ublox.cpp
 
 Util.o: $(NAVIO)/Util.cpp
 	$(CXX) $(INCLUDES) $(CFLAGS) $(NAVIO)/Util.cpp

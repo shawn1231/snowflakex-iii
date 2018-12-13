@@ -36,6 +36,8 @@
 #define GPSKEY 1
 #define MSG_BAR "======================================="
 
+#define GPSRATE 100
+
 using namespace std;
 
 int m_order = 2;
@@ -250,6 +252,16 @@ static volatile double vert_accuracy = 0;
 static volatile int status_gps = 0x00; // default condition - no fix
 string status_gps_string = "no fix";
 
+// gps variables for inside the thread
+static volatile double g_time_gps = 0;
+static volatile double g_lat = 0;
+static volatile double g_lng = 0;
+static volatile double g_alt_ellipsoid = 0;
+static volatile double g_msl_gps = 10000;
+static volatile double g_horz_accuracy = 0;
+static volatile double g_vert_accuracy = 0;
+static volatile int g_status_gps = 0x00; // default condition - no fix
+
 //----------------------------------------------------------------------------------------------------------Waypoint Declarations
 double waypoints[50][3]; // waypoint array is 50x3
 //double target[2] = {35.7178528,-120.76411}; // from step input payload drop
@@ -278,6 +290,8 @@ PI_THREAD (decodeGPS)
 			cout << "Fatal exception, navigation impossible" << endl;
 			cout << "without GPS, try restarting..........." << endl;
 			// return EXIT_FAILURE;}}
+		gps.configureSolutionRate(GPSRATE,GPSRATE);
+		cout << " UBLOX solution rate successfully set " << endl;
 	}}
 	else{ // gps is good!
 		cout << "  --GPS successfully initialized--    " << endl;}
@@ -285,22 +299,39 @@ PI_THREAD (decodeGPS)
 	{
 		if (gps.decodeSingleMessage(Ublox::NAV_POSLLH, pos_data) == 1)
 		{
-			piLock(GPSKEY);
-			time_gps = pos_data[0]/1000.00000;
-			lng = pos_data[1]/10000000.00000;
-			lat = pos_data[2]/10000000.00000;
-			alt_ellipsoid = (pos_data[3]/1000.00000)*3.28;
-			msl_gps = (pos_data[4]/1000.00000)*3.28;
-			horz_accuracy = (pos_data[5]/1000.00000)*3.28;
-			vert_accuracy = (pos_data[6]/1000.00000)*3.28;
-			piUnlock(GPSKEY);
+			g_time_gps = pos_data[0]/1000;
+			g_lng = pos_data[1]/10000000.00000;
+			g_lat = pos_data[2]/10000000.00000;
+			g_alt_ellipsoid = (pos_data[3]/1000.00000)*3.28;
+			g_msl_gps = (pos_data[4]/1000.00000)*3.28;
+			g_horz_accuracy = (pos_data[5]/1000.00000)*3.28;
+			g_vert_accuracy = (pos_data[6]/1000.00000)*3.28;
+			usleep(2);
 		}
-		if (gps.decodeSingleMessage(Ublox::NAV_STATUS, pos_data) == 1)
-		{
+
 			piLock(GPSKEY);
- 			status_gps = (int)pos_data[0];
+
+			time_gps = g_time_gps;
+			lng = g_lng;
+			lat = g_lat;
+			alt_ellipsoid = g_alt_ellipsoid;
+			msl_gps = g_msl_gps;
+			horz_accuracy = g_horz_accuracy;
+			vert_accuracy = g_vert_accuracy;
+
 			piUnlock(GPSKEY);
-		}
+
+//			usleep(2);
+
+//		if (gps.decodeSingleMessage(Ublox::NAV_STATUS, pos_data) == 1)
+//		{
+//
+//			g_status_gps = (int)pos_data[0];
+//
+//			piLock(GPSKEY);
+//			status_gps = g_status_gps;
+//			piUnlock(GPSKEY);
+//		}
 
 	}
 }
@@ -680,7 +711,7 @@ int main( int argc , char *argv[])
 
 		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(3)) > parachute.timer.get_duration(3))
 		{
-
+/*
 			piLock(GPSKEY);
 
 			// decode GPS status at 100 Hz, no need to do this in the thread, also causes scope problems
@@ -709,7 +740,7 @@ int main( int argc , char *argv[])
 			}
 
 			piUnlock(GPSKEY);
-
+*/
 			// barometer read placed inside barometer class
 			parachute.baro.update_sensor();
 
@@ -759,7 +790,7 @@ int main( int argc , char *argv[])
 					yaw_desired = parachute.rc.get_scaled(3);
 					break;
 				case 's': // Tuesday 8/28 Payload3 heading control steps %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-					piLock(GPSKEY);
+//					piLock(GPSKEY);
 					heading_type_message = "Step Input (altitude driven)";
 //					if(msl_gps > 1400){
 //						yaw_desired = user_heading;}
@@ -779,10 +810,10 @@ int main( int argc , char *argv[])
 //					} else{
 //						yaw_desired = 0; // set yaw desired here
 
-					piUnlock(GPSKEY);
+//					piUnlock(GPSKEY);
 					break;
 				case 'n':
-					piLock(GPSKEY);
+//					piLock(GPSKEY);
 					heading_type_message = "Navigation Algorithm";
 					//write code to determine heading here
 					//lat_target
@@ -794,17 +825,17 @@ int main( int argc , char *argv[])
 						yaw_desired = atan2(waypoints[wind_level_index][1]-lng,waypoints[wind_level_index][0]-lat);
 						yaw_desired = (yaw_desired/.0175);
 					}
-					piUnlock(GPSKEY);
+//					piUnlock(GPSKEY);
 					break;
 				case 'd':
-					piLock(GPSKEY);
+//					piLock(GPSKEY);
 					heading_type_message = "Dumb Navigation";
 					yaw_desired = atan2(target[1]-lng,target[0]-lat);
 					yaw_desired = (yaw_desired/.0175);
-					piUnlock(GPSKEY);
+//					piUnlock(GPSKEY);
 					break;
 				case 'p':
-					piLock(GPSKEY);
+//					piLock(GPSKEY);
 					heading_type_message = "Dubin's Path Generation";
 					if( abs(yaw_mpu_madgwick - final_heading) > 240) // connect cw-ccw circles
 					{
@@ -843,7 +874,7 @@ int main( int argc , char *argv[])
 					{
 //						yaw_l_desired = final_heading;
 					}
-					piUnlock(GPSKEY);
+//					piUnlock(GPSKEY);
 					break;
 				default:
 					heading_type_message = "Default - North";
@@ -1107,9 +1138,9 @@ int main( int argc , char *argv[])
 			fout << yaw_desired << "," <<  yaw_error << "," << yaw_error_previous << "," << yaw_error_rate << "," << yaw_error_sum << ",";
 			fout << control_type << "," << heading_type << ",";
 
-			piLock(GPSKEY);
+//			piLock(GPSKEY);
 			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << "," << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << "," << status_gps_string << ",";
-			piUnlock(GPSKEY);
+//			piUnlock(GPSKEY);
 
 			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << ",";
 			fout << yaw_l_desired << "," <<  yaw_l_error << "," << yaw_l_error_previous << "," << yaw_l_error_rate << "," << yaw_l_error_sum;
@@ -1181,7 +1212,7 @@ int main( int argc , char *argv[])
 				cout << " Gyroscope: " << g_lsm[0] << " " << g_lsm[1] << " " << g_lsm[2];
 				cout << " Magnetometer: " << m_lsm[0] << " " << m_lsm[1] << " " << m_lsm[2] << endl;
 
-				piLock(GPSKEY);
+//				piLock(GPSKEY);
 
 				cout << "GPS Status: " << status_gps_string << " GPS Time: " << time_gps << endl;
 				cout << "Lat: ";
@@ -1193,7 +1224,7 @@ int main( int argc , char *argv[])
 				cout << "Lat: " << waypoints[wind_level_index][0] << " deg\tLng: " << waypoints[wind_level_index][1] << " def\tAlt(msl): " << waypoints[wind_level_index][2] << " ft\tWind level index: " << wind_level_index << endl;
 				cout << "Horz accuracy: " << horz_accuracy << " ft\t"  << " Vert Accuracy: " << vert_accuracy << " ft" << endl;
 
-				piUnlock(GPSKEY);
+//				piUnlock(GPSKEY);
 
 				cout << "Euler Angles (Mahony): " << "(dt = " << dt << ")" <<endl;
 				cout << "MPU9250: Roll: " << roll_mpu_mahony << " Pitch: " << pitch_mpu_mahony << " Yaw: " << yaw_mpu_mahony << endl;
