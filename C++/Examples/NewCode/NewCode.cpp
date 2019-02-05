@@ -989,9 +989,9 @@ int main( int argc , char *argv[])
 //					cout << "p1 = " << p1 << "\tp2 = " << p2 << endl;
 //					cout << "p1_d*dt_control = " << p1_d*dt_control << "\tp2_d*dt_control = " << p2_d*dt_control << endl;
 
-					cmd_adapt = cmd_adapt/10000;
+					cmd_adapt = cmd_adapt/100000;
 
-					winch_left_cmd = LINE_NEUTRAL + cmd_adapt;
+					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET + cmd_adapt;
 //					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
 					winch_right_cmd = LINE_NEUTRAL + LINE_OFFSET;
 //					winch_right_cmd = LINE_NEUTRAL + cmd_adapt;
