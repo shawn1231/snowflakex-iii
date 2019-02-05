@@ -49,10 +49,13 @@ digital_filter reference_model(m_order, m_type, m_fc, m_fs);
 
 //const float l1 = .003;
 //const float l2 = .003;
-const float l1 = .00015;
-const float l2 = .00015;
+//const float l1 = .00015;
+//const float l2 = .00015;
+const float l1 = .00007;
+const float l2 = .00007;
 const float kp_outer_loop = 1;
 const float ki_outer_loop = 0;
+const float cmd_scale = 100000;
 
 float p1 = .017;
 float p2 = 0;
@@ -989,7 +992,7 @@ int main( int argc , char *argv[])
 //					cout << "p1 = " << p1 << "\tp2 = " << p2 << endl;
 //					cout << "p1_d*dt_control = " << p1_d*dt_control << "\tp2_d*dt_control = " << p2_d*dt_control << endl;
 
-					cmd_adapt = cmd_adapt/100000;
+					cmd_adapt = cmd_adapt/cmd_scale;
 
 					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET + cmd_adapt;
 //					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
