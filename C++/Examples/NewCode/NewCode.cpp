@@ -49,8 +49,8 @@ digital_filter reference_model(m_order, m_type, m_fc, m_fs);
 
 //const float l1 = .003;
 //const float l2 = .003;
-const float l1 = .0003;
-const float l2 = .0003;
+const float l1 = .00015;
+const float l2 = .00015;
 const float kp_outer_loop = 1;
 const float ki_outer_loop = 0;
 
