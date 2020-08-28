@@ -32,17 +32,11 @@
 // Serial Includes
 #include <wiringSerial.h>
 #include <wiringPi.h>
-#include <atomic>
-#include <pthread.h>
-
-#include <sys/resource.h>
 
 #define GPSKEY 1
 #define MSG_BAR "======================================="
 
 using namespace std;
-
-int serial_port;
 
 float dt_control = 0;
 
@@ -194,6 +188,8 @@ string control_type_message = "null";
 // most barometer variables moved to barometer class
 float msl = 0.0; // mean sea level altitue (ft) [should be close to 920ft for UMKC Flarsheim]
 
+// rc input declaration moved to remote_control class
+
 //---------------------------------------------------------------------------------------------------------------IMU Declarations
 //#define DECLINATION -12.71 //magnetic declination for camp roberts
 //#define DECLINATION -10.33 //magnetic declination for Yuma Proving Ground
@@ -220,8 +216,8 @@ float gyro_z_mpu_old[3] = {0,0,0};
 #define LINE_NEUTRAL 0//1.500 // center point for the actuator, range is 1.000-2.000
 #define LINE_OFFSET 55//.055 // think this was used when glide was applied by the "static" actuator after initialization
 #define DEFLECTION_LIMIT 150//.15 // correction, this is used for saturation
-atomic<float> winch_right_cmd(0);
-atomic<float> winch_left_cmd(0);
+int winch_right_cmd = 0;
+int winch_left_cmd = 0;
 
 //--------------------------------------------------------------------------------------------------------------AHRS Declarations
 #define PI 3.14159
@@ -248,14 +244,14 @@ float mag_offset_lsm[3] = {-5.388,1.707,72.647};
 float mag_rotation_lsm[3][3] = {{.843,-.192,.088},{-.192,.677,.112},{.088,.112,.949}};
 
 //---------------------------------------------------------------------------------------------------------------GPS Declarations double
-atomic<double> time_gps(0);
-atomic<double> lat(0);
-atomic<double> lng(0);
-atomic<double> alt_ellipsoid(0);
-atomic<double> msl_gps(10000);
-atomic<double> horz_accuracy(0);
-atomic<double> vert_accuracy(0);
-atomic<int> status_gps(0x00); // default condition - no fix
+static volatile double time_gps = 0;
+static volatile double lat = 0;
+static volatile double lng = 0;
+static volatile double alt_ellipsoid = 0;
+static volatile double msl_gps = 10000;
+static volatile double horz_accuracy = 0;
+static volatile double vert_accuracy = 0;
+static volatile int status_gps = 0x00; // default condition - no fix
 string status_gps_string = "no fix";
 
 //----------------------------------------------------------------------------------------------------------Waypoint Declarations
@@ -273,13 +269,8 @@ double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
 
-
-
-void *gpsdriver(void *)
+PI_THREAD (decodeGPS)
 {
-
-	setpriority(PRIO_PROCESS, 0, -15);
-
 	(void)piHiPri(99);
 	static vector<double> pos_data; // this vector will contain undecoded gps information
 	static Ublox gps;
@@ -298,6 +289,7 @@ void *gpsdriver(void *)
 	{
 		if (gps.decodeSingleMessage(Ublox::NAV_POSLLH, pos_data) == 1)
 		{
+			piLock(GPSKEY);
 			time_gps = pos_data[0]/1000.00000;
 			lng = pos_data[1]/10000000.00000;
 			lat = pos_data[2]/10000000.00000;
@@ -305,152 +297,20 @@ void *gpsdriver(void *)
 			msl_gps = (pos_data[4]/1000.00000)*3.28;
 			horz_accuracy = (pos_data[5]/1000.00000)*3.28;
 			vert_accuracy = (pos_data[6]/1000.00000)*3.28;
+			piUnlock(GPSKEY);
 		}
 		if (gps.decodeSingleMessage(Ublox::NAV_STATUS, pos_data) == 1)
 		{
+			piLock(GPSKEY);
  			status_gps = (int)pos_data[0];
+			piUnlock(GPSKEY);
 		}
-
-		usleep(.5*1000000);
 
 	}
-
-	pthread_exit(NULL);
-}
-
-
-int enci1;
-int enci2;
-
-void *roboteqdriver(void *)
-{
-
-	setpriority(PRIO_PROCESS, 0, -15);
-
-	string serailmotorstring;
-	string prefix = "!G 1 ";
-	string suffix = "\r";
-
-	string tempstring;
-
-	char serial_output = '+';
-
-	int cmd1;
-	int cmd2;
-
-	std::string serialmotor1;
-	std::string charcmd1;
-
-	std::string serialmotor2;
-	std::string charcmd2;
-
-	int enci1;
-	int enci2;
-
-	while(true)
-	{
-
-		charcmd1 = to_string(cmd1);
-		charcmd2 = to_string(cmd2);
-
-		cmd1 = winch_right_cmd.load(memory_order_relaxed);
-		cmd2 = winch_left_cmd.load(memory_order_relaxed);
-
-		char serial_output;
-		serial_output = '+';
-
-		// MOTOR 1
-
-		serialmotor1 = "!G 1 ";
-		serialmotor1 += charcmd1;
-		serialmotor1 += "\r";
-
-		const char * charmotor1 = serialmotor1.c_str();
-		serialPuts(serial_port,charmotor1);
-
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-		}
-
-		serial_output = serialGetchar(serial_port);
-		serial_output = serialGetchar(serial_port);
-
-		serialPuts(serial_port,"?F 1\r");
-
-		serial_output = serialGetchar(serial_port);
-
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-		}
-
-		serial_output = serialGetchar(serial_port);
-		serial_output = serialGetchar(serial_port);
-
-		std::string enc1 ("");
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-			enc1 += serial_output;
-		}
-
-		enc1.erase(enc1.size()-1);
-		enci1 = stoi(enc1);
-
-		serial_output = '+';
-
-		serialmotor2 = "!G 2 ";
-		serialmotor2 += charcmd2;
-		serialmotor2 += "\r";
-
-		const char * charmotor2 = serialmotor2.c_str();
-		serialPuts(serial_port,charmotor2);
-
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-		}
-
-		serial_output = serialGetchar(serial_port);
-		serial_output = serialGetchar(serial_port);
-
-		serialPuts(serial_port,"?F 2\r");
-		serial_output = serialGetchar(serial_port);
-
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-		}
-
-		serial_output = serialGetchar(serial_port);
-		serial_output = serialGetchar(serial_port);
-
-		std::string enc2 ("");
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-			enc2 += serial_output;
-		}
-
-		enc2.erase(enc2.size()-1);
-
-		enci2 = stoi(enc2);
-
-		// 1,000,000us = 1s
-		usleep(.02*1000000);
-
-	}
-
-	pthread_exit(NULL);
-
 }
 
 int main( int argc , char *argv[])
 {
-
-	setpriority(PRIO_PROCESS, 0, -20);
-
 	// when they were initialized, the data_file objects mpu_offsets and lsm_offsets automatically read in the file contents
 	// now to make the information contained in the calibration file useful we need to split it into a magnetometer offset
 	// vector and a 3x3 rotation matrix
@@ -564,7 +424,7 @@ int main( int argc , char *argv[])
 		mpu->read_gyroscope(&g_mpu[0],&g_mpu[1],&g_mpu[2]); // read the updated info
 		lsm->update(); // update the lsm sensor
 		lsm->read_gyroscope(&g_lsm[0],&g_lsm[1],&g_lsm[2]); // read the updated info
-		//read 100 samples from each gyroscope axis on each sensor
+		//read 100 samples from each gyroscope axis on each sensor	
 		offset_mpu[0] -= g_mpu[0];
 		offset_mpu[1] -= g_mpu[1];
 		offset_mpu[2] -= g_mpu[2];
@@ -605,40 +465,21 @@ int main( int argc , char *argv[])
 
 	int wind_level_index = 0;
 
-	pthread_t threadgps;
-
-	int thr1 = pthread_create(&threadgps, NULL, gpsdriver, NULL);
-
-	if(thr1)
-	{
-		cout << "Error: unable to create thread" << endl;
-	}
-
-	cout << "      --GPS thread enabled--     " << endl;
+	piThreadCreate(decodeGPS);
 
 	//------------------------------------------------------------------------------------------------------------Serial Initialization
 	//cout << "Initializing Serial Output............" << endl;
 	//int serialHandle = serialOpen("/dev/ttyAMA0", 9600);
 	//cout << "--Serial Output successfully opened --" << endl;
 
+	int serial_port ;
+	char dat;
+
 	cout << "Opening serial port.........." << endl;
 	serial_port = serialOpen("/dev/ttyAMA0",115200);
-	wiringPiSetup() == -1;
+	wiringPiSetup() == -1;	
 	cout << "     --Serial UART enabled--     " << endl;
 
-
-	pthread_t threadserial;
-
-	cout << "Opening serial thread........" << endl;
-
-	int thr2 = pthread_create(&threadserial, NULL, roboteqdriver, NULL);
-
-	if(thr2)
-	{
-		cout << "Error: unable to create thread" << endl;
-	}
-
-	cout << "    --Serial thread enabled--    " << endl;
 
 	//------------------------------------------------------------------------------------------------------------------Welcome Message
 	usleep(500000);
@@ -656,10 +497,10 @@ int main( int argc , char *argv[])
 	while(true)
 	{
 		int standby_message_timer = 0; // used to limit the frequency of the standby message
-//		while(!(adc_array[4] < 4000)){
+		while(!(adc_array[4] < 4000)){
 //		while(!((parachute.rc.get_raw(5)>1500)&&(adc_array[4]<4000))){
-bool temp_flag = false; // uncomment for testing with no transmitter
-while(!temp_flag){ // uncomment for testing with no transmitter
+//bool temp_flag = false; // uncomment for testing with no transmitter
+//while(!temp_flag){ // uncomment for testing with no transmitter
 			if(standby_message_timer > 250){
 				cout << endl << "---------------------------------------" << endl << "           Autopilot Inactive         " << endl;
 				cout << "  Dynamic Lines at Neutral Deflection " << endl;
@@ -710,7 +551,7 @@ while(!temp_flag){ // uncomment for testing with no transmitter
 			yaw_error_sum       = 0; // prevent integral wind up
 			yaw_error           = 0;
 			yaw_error_previous  = 0;
-temp_flag = true; // uncomment for testing with no transmitter
+//temp_flag = true; // uncomment for testing with no transmitter
 
 		}
 
@@ -775,9 +616,9 @@ temp_flag = true; // uncomment for testing with no transmitter
 		num_wraps = 0;
 		yaw_prev = 0;
 
-//	while(adc_array[4] < 4000) // while condition for arm lanyard only
+	while(adc_array[4] < 4000) // while condition for arm lanyard only
 //	while((parachute.rc.get_raw(5)>1500)&&(adc_array[4]<4000)) // this is to be used when an RC transmitter is present as well as the arm lanyard
-while(true)
+//while(true)
 	{
 /* 		// refresh time now to prepare for another loop execution
 		gettimeofday(&time_obj, NULL); // must first update the time_obj
@@ -792,8 +633,6 @@ while(true)
 			//----------------------------------------------------------------------------------------------------------------AHRS Update
 			dt = parachute.timer.get_current_time()-parachute.timer.get_timer(0);
 			dt = dt/1000000.0; // convert from useconds
-
-
 
 			if(wind_level_index<49){
 				if(msl_gps < waypoints[wind_level_index][2]){
@@ -837,8 +676,6 @@ while(true)
 			gyro_z_lsm_old[1] = gyro_z_lsm_old[0];
 			gyro_z_lsm_old[0] = g_lsm_ahrs[2]-offset_lsm[2];
 
-
-
 			parachute.timer.update_watcher(0); // used to check loop frequency
 			parachute.timer.update_timer(0);
 		}
@@ -854,7 +691,7 @@ while(true)
 		{
 
 			// testing maneuver generator at Natick AGU speed of 5Hz
-//			out = maneuver_generator(step,plus_minus,multi_step,des_period,des_amp,num_steps_mg,des_delay);
+			out = maneuver_generator(step,plus_minus,multi_step,des_period,des_amp,num_steps_mg,des_delay);
 
 //			if(msl_gps < 2700)
 //			{
@@ -873,6 +710,8 @@ while(true)
 
 		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(3)) > parachute.timer.get_duration(3))
 		{
+
+			piLock(GPSKEY);
 
 			// decode GPS status at 100 Hz, no need to do this in the thread, also causes scope problems
 			switch(status_gps){
@@ -898,6 +737,8 @@ while(true)
 					status_gps_string = "Reserved value. Current state unknown";
 					break;
 			}
+
+			piUnlock(GPSKEY);
 
 			// barometer read placed inside barometer class
 			parachute.baro.update_sensor();
@@ -925,11 +766,6 @@ while(true)
 				dt_control = 0;
 			}
 //			cout << endl << dt_control << endl;
-
-//			tdata.cmd1 = winch_left_cmd;
-//			tdata.cmd2 = winch_right_cmd;
-
-//			pthread_create(&tid, NULL, actuators, (void *)&tdata);
 
 			// determine what type of heading we are going to used based on the configuration file (or default parameter in the code)
 			switch(heading_type){
@@ -959,6 +795,7 @@ while(true)
 					yaw_desired = parachute.rc.get_scaled(3);
 					break;
 				case 's': // Tuesday 8/28 Payload3 heading control steps %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+					piLock(GPSKEY);
 					heading_type_message = "Step Input (altitude driven)";
 //					if(msl_gps > 1400){
 //						yaw_desired = user_heading;}
@@ -978,8 +815,10 @@ while(true)
 //					} else{
 //						yaw_desired = 0; // set yaw desired here
 
+					piUnlock(GPSKEY);
 					break;
 				case 'n':
+					piLock(GPSKEY);
 					heading_type_message = "Navigation Algorithm";
 					//write code to determine heading here
 					//lat_target
@@ -991,13 +830,17 @@ while(true)
 						yaw_desired = atan2(waypoints[wind_level_index][1]-lng,waypoints[wind_level_index][0]-lat);
 						yaw_desired = (yaw_desired/.0175);
 					}
+					piUnlock(GPSKEY);
 					break;
 				case 'd':
+					piLock(GPSKEY);
 					heading_type_message = "Dumb Navigation";
 					yaw_desired = atan2(target[1]-lng,target[0]-lat);
 					yaw_desired = (yaw_desired/.0175);
+					piUnlock(GPSKEY);
 					break;
 				case 'p':
+					piLock(GPSKEY);
 					heading_type_message = "Dubin's Path Generation";
 					if( abs(yaw_mpu_madgwick - final_heading) > 240) // connect cw-ccw circles
 					{
@@ -1036,13 +879,12 @@ while(true)
 					{
 //						yaw_l_desired = final_heading;
 					}
+					piUnlock(GPSKEY);
 					break;
 				default:
 					heading_type_message = "Default - North";
 					yaw_desired = 0;
 					break;}
-
-
 
 			// make yaw continuous instead of +/-180 using a wrap counter
 			if(yaw_mpu_madgwick > WRAP_THRESHOLD && yaw_prev < - WRAP_THRESHOLD){
@@ -1173,7 +1015,7 @@ while(true)
 						winch_left_cmd = 0;
 						winch_right_cmd = 0;}
 
-					winch_left_cmd = LINE_NEUTRAL + sweep_amp*sin(phi);
+					winch_left_cmd  = LINE_NEUTRAL + sweep_amp*sin(phi);
 					winch_right_cmd = LINE_NEUTRAL + sweep_amp*sin(phi);
 					break;
 
@@ -1196,7 +1038,7 @@ while(true)
 									  N = -num_steps;}
 									}}
 
-						winch_left_cmd = LINE_NEUTRAL + step_size*N*state;
+						winch_left_cmd  = LINE_NEUTRAL + step_size*N*state;
 						winch_right_cmd = LINE_NEUTRAL + step_size*N*state;
 						break;
 				case 'p':
@@ -1286,12 +1128,122 @@ while(true)
 			else if(winch_left_cmd < LINE_NEUTRAL - DEFLECTION_LIMIT){
 				winch_left_cmd = LINE_NEUTRAL - DEFLECTION_LIMIT;}
 
-//			cout << "cmd1: " << tdata.cmd1 << " enc1: " << tdata.enc1 << endl;
-//			cout << "cmd2: " << tdata.cmd2 << " enc2: " << tdata.enc2 << endl;
+
+			char serial_output;
+			serial_output = '+';
+	
+			// MOTOR 1
+		
+			std::string serialmotor1;
+
+			std::string charcmd1 = std::to_string(winch_left_cmd);
+
+			//cout << "char cmd: " << charcmd1 << endl;
+
+			serialmotor1 = "!G 1 ";
+			serialmotor1 += charcmd1;
+			serialmotor1 += "\r";
+
+			const char * charmotor1 = serialmotor1.c_str();
+			serialPuts(serial_port,charmotor1);
+
+			//cout << "serialputs motor command send" << endl;
+
+			while(serial_output != '\r')
+			{
+				//cout << "serial chars available: " << serialDataAvail(serial_port) << "serial output " << serial_output<< endl;
+				serial_output = serialGetchar(serial_port);
+			}
+
+			serial_output = serialGetchar(serial_port);
+			serial_output = serialGetchar(serial_port);
+
+			//cout << "please be empty: " << serialDataAvail(serial_port) << endl;
+
+			serialPuts(serial_port,"?F 1\r");
+			//cout << "serialputs motor feedback" << endl;
+			//cout <<"serial chars avail: " << serialDataAvail(serial_port) << endl;
+
+			serial_output = serialGetchar(serial_port);
+
+			while(serial_output != '\r')
+			{
+				serial_output = serialGetchar(serial_port);
+				//cout << "serial fdbk output: " << serial_output << endl;
+			}
+
+			serial_output = serialGetchar(serial_port);
+			serial_output = serialGetchar(serial_port);
+
+			std::string enc1 ("");
+			while(serial_output != '\r')
+			{
+				serial_output = serialGetchar(serial_port);
+				//cout << "serial fdbk output: " << serial_output << endl;
+				enc1 += serial_output;
+			}
+
+			enc1.erase(enc1.size()-1);
+
+			cout << "encoder 1 output: " << enc1;
+			cout << "Serial Chars available left (1): " << serialDataAvail(serial_port) << endl;
+
+			serial_output = '+';
+
+			// MOTOR 2
+
+			std::string serialmotor2;
+
+			std::string charcmd2 = std::to_string(winch_right_cmd);
+
+			//cout << "char cmd: " << charcmd2 << endl;
+
+			serialmotor2 = "!G 2 ";
+			serialmotor2 += charcmd2;
+			serialmotor2 += "\r";
+
+			const char * charmotor2 = serialmotor2.c_str();
+			serialPuts(serial_port,charmotor2);
+
+			//cout << "serialputs motor command send" << endl;
+
+			while(serial_output != '\r'){
+			//cout << "serial chars available: " << serialDataAvail(serial_port) << "serial output " << serial_output<< endl;
+			serial_output = serialGetchar(serial_port);}
+
+			serial_output = serialGetchar(serial_port);
+			serial_output = serialGetchar(serial_port);
+
+			//cout << "please be empty: " << serialDataAvail(serial_port) << endl;
+
+			serialPuts(serial_port,"?F 2\r");
+			//cout << "serialputs motor feedback" << endl;
+			//cout <<"serial chars avail: " << serialDataAvail(serial_port) << endl;
+
+			serial_output = serialGetchar(serial_port);
+
+			while(serial_output != '\r'){
+			serial_output = serialGetchar(serial_port);
+			//cout << "serial fdbk output: " << serial_output << endl;
+			}
+
+			serial_output = serialGetchar(serial_port);
+			serial_output = serialGetchar(serial_port);
+
+			std::string enc2 ("");
+			while(serial_output != '\r'){
+			serial_output = serialGetchar(serial_port);
+			//cout << "serial fdbk output: " << serial_output << endl;
+			enc2 += serial_output;}
+
+			enc2.erase(enc2.size()-1);
+
+			cout << "encoder 2 output: " << enc2;
+			cout << "Serial Chars available right (2): " << serialDataAvail(serial_port) << endl;
+
 
 			//-------------------------------------------------------------------------------------------------------Data Log File Output
 			fout << today << "," << parachute.timer.get_current_time() << "," << msl << ",";
-
 			for(int i = 0 ; i < NUM_CHANNELS ; i++){
 				fout << parachute.rc.get_raw(i) << ",";}
 			for(int i = 0 ; i < NUM_CHANNELS ; i++){
@@ -1305,20 +1257,21 @@ while(true)
 			fout << a_mpu[0] << "," << a_mpu[1] << "," << a_mpu[2] << "," << a_lsm[0] << "," << a_lsm[1] << ",";
 			fout << a_lsm[2] << "," << g_mpu[0] << "," << g_mpu[1] << "," << g_mpu[2] << "," << g_lsm[0] << "," << g_lsm[1] << ",";
 			fout << g_lsm[2] << "," << m_mpu[0] << "," << m_mpu[1] << "," << m_mpu[2] << "," << m_lsm[0] << "," << m_lsm[1] << "," << m_lsm[2] << ",";
-			fout << winch_right_cmd.load(memory_order_relaxed) << "," << winch_left_cmd.load(memory_order_relaxed) << ","  ;
+			fout << winch_right_cmd << "," << winch_left_cmd << ","  ;
 			fout << kp << "," << ki << "," << kd << ",";
 			fout << yaw_desired << "," <<  yaw_error << "," << yaw_error_previous << "," << yaw_error_rate << "," << yaw_error_sum << ",";
 			fout << control_type << "," << heading_type << ",";
 
-//			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << "," << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << "," << status_gps_string << ",";
-			fout << setprecision(9) << time_gps.load(memory_order_relaxed) << "," << lat.load(memory_order_relaxed) << "," << lng.load(memory_order_relaxed) << "," << alt_ellipsoid.load(memory_order_relaxed) << "," << msl_gps.load(memory_order_relaxed) << "," << horz_accuracy.load(memory_order_relaxed) << "," << vert_accuracy.load(memory_order_relaxed) << "," << status_gps.load(memory_order_relaxed) << "," << status_gps_string << ",";
+			piLock(GPSKEY);
+			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << "," << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << "," << status_gps_string << ",";
+			piUnlock(GPSKEY);
 
 			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << ",";
 			fout << yaw_l_desired << "," <<  yaw_l_error << "," << yaw_l_error_previous << "," << yaw_l_error_rate << "," << yaw_l_error_sum << ",";
 
 			fout << l1 << "," << l2 << "," << kp_outer_loop << "," << ki_outer_loop << "," << error_outer_loop << ",";
 			fout << error_sum_outer_loop << "," << yaw_rate_desired << "," << yaw_rate_model << "," << cmd_adapt << ",";
-			fout << error_model << "," << p1 << "," << p2 << "," << p1_d << "," << p2_d; // << "," << enci1 << "," << enci2;
+			fout << error_model << "," << p1 << "," << p2 << "," << p1_d << "," << p2_d << "," << enc1 << "," << enc2;
 
 			fout << endl;
 
@@ -1381,6 +1334,8 @@ while(true)
 				cout << " Gyroscope: " << g_lsm[0] << " " << g_lsm[1] << " " << g_lsm[2];
 				cout << " Magnetometer: " << m_lsm[0] << " " << m_lsm[1] << " " << m_lsm[2] << endl;
 
+				piLock(GPSKEY);
+
 				cout << "GPS Status: " << status_gps_string << " GPS Time: " << time_gps << endl;
 				cout << "Lat: ";
 				cout << setprecision(9) <<  lat;
@@ -1390,6 +1345,8 @@ while(true)
 				cout << "Current Waypoint: " << endl;
 				cout << "Lat: " << waypoints[wind_level_index][0] << " deg\tLng: " << waypoints[wind_level_index][1] << " def\tAlt(msl): " << waypoints[wind_level_index][2] << " ft\tWind level index: " << wind_level_index << endl;
 				cout << "Horz accuracy: " << horz_accuracy << " ft\t"  << " Vert Accuracy: " << vert_accuracy << " ft" << endl;
+
+				piUnlock(GPSKEY);
 
 				cout << "Euler Angles (Mahony): " << "(dt = " << dt << ")" <<endl;
 				cout << "MPU9250: Roll: " << roll_mpu_mahony << " Pitch: " << pitch_mpu_mahony << " Yaw: " << yaw_mpu_mahony << endl;
@@ -1409,7 +1366,6 @@ while(true)
 				cout << "Number of wraps: " << num_wraps << endl;
 
 				cout << "Yaw Limited Desired: " << yaw_l_desired << endl << endl;
-
 
 				}
 
@@ -1437,9 +1393,6 @@ while(true)
 			parachute.timer.update_watcher(8); // used to check loop frequency
 			parachute.timer.update_timer(8);
 		}
-
-		usleep(10);
-//		cout << "this is executing" << endl;
 
 	}
 
