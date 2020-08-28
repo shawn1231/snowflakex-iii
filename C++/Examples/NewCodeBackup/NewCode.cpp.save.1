@@ -1,11 +1,5 @@
 // custom function includes
-#include "Navio/wrapped_variable.h"
-#include "Navio/data_file.h"
-#include "Navio/herrington_utils.h"
-#include "Navio/testing.h"
-#include "Navio/vehicle.h"
-#include "Navio/digital_filter.h"
-
+#include "Navio/ScaleVars.h" // functions for re-scaling a value within a specified output range
 // log file includes
 #include <fstream>
 #include <string>
@@ -16,12 +10,16 @@
 #include <iostream>
 #include <iomanip> // used to force GPS data to output with correct precision
 // Navio2 includes
+// barometer includes
+#include "Navio/MS5611.h"
 #include <cmath>
 // RC Input includes
-//#include <Navio/RCInput.h>
+#include <Navio/RCInput.h>
 // IMU Includes
 #include "Navio/MPU9250.h"
 #include "Navio/LSM9DS1.h"
+// PWM Output Includes
+#include "Navio/PWM.h"
 #include "Navio/Util.h"
 // AHRS Includes
 #include "AHRS2.hpp"
@@ -31,76 +29,129 @@
 #include "Navio/Ublox.h"
 // Serial Includes
 #include <wiringSerial.h>
-#include <wiringPi.h>
-#include <atomic>
-#include <pthread.h>
 
-#include <sys/resource.h>
+#include "Navio/wrapped_variable.h"
 
-#define GPSKEY 1
-#define MSG_BAR "======================================="
+
+
+#include <vector>
+#include <map>
 
 using namespace std;
 
-int serial_port;
+class data_file
+{
+	private:
+		std::string file_path; // relative to current location or absolute
+		ifstream ifs; // input file stream object
+		int max_col;
+		int max_row;
+		char delimiter;
+		std::vector<vector<float>> data; // 2-D vector to hold input data
 
-float dt_control = 0;
+		void read_file()
+		{
+			char trash;
+			ifs.open(file_path);
+			for(int i = 0 ; i < max_col ; i++) // this is the colum iterator
+			{
+				for(int j = 0 ; j < max_row ; j++ )
+				{
+					if(j != 0) // first column has no leading delimiter
+					{
+						ifs >> trash;  // read the delimiter, it will not be used
+					}
+					else
+					{
+						// do nothing, no delimiter to remove
+					}
+					// always do these things
+					ifs >> data[i][j];
+				}
+			}
+			ifs.close();
+		}
 
-int m_order = 2;
-char m_type = 'l';
-float m_fc  = 2; //hz
-float m_fs  = 100; //hz
+	public:
+		data_file() // blank constructor, useless
+		{
+			file_path = "null";
+			max_col = 0;
+			max_row = 0;
+			char delimiter = '0';
+			data.resize(max_col);
+			for( int i = 0 ; i++ ; i< max_col)
+			{
+				data[i].resize(max_row);
+			}
+			// don't read file, there is nothing to read
+		}
 
-digital_filter reference_model(m_order, m_type, m_fc, m_fs);
+		data_file(std::string des_file_path, int col_to_read, int row_to_read) // usefull constructor
+		{
+			file_path = des_file_path;
+			max_col = col_to_read;
+			max_row = row_to_read;
+			char delimiter = ','; // default to comma
+			data.resize(max_col);
+			for( int i = 0 ; i++ ; i< max_col)
+			{
+				data[i].resize(max_row);
+			}
+			read_file();
+		}
 
-//const float l1 = .003;
-//const float l2 = .003;
-const float l1 = .0003;
-const float l2 = .0003;
-const float kp_outer_loop = 1;
-const float ki_outer_loop = 0;
 
-float p1 = .017;
-float p2 = 0;
-float p1_d = 0;
-float p2_d = 0;
+		data_file(std::string des_file_path, int col_to_read, int row_to_read, char des_delim) // usefull constructor
+		{
+			file_path = des_file_path;
+			max_col = col_to_read;
+			max_row = row_to_read;
+			char delimiter = des_delim;
+			data.resize(max_col);
+			for( int i = 0 ; i++ ; i< max_col)
+			{
+				data[i].resize(max_row);
+			}
+			read_file();
+		}
 
-float error_outer_loop = 0;
-float error_sum_outer_loop = 0;
-float yaw_rate_desired = 0;
-float yaw_rate_model = 0;
-float cmd_adapt = 0;
-float error_model = 0;
+		void print_data()
+		{
+			for(int i = 0 ; i < max_col ; i++) // this is the colum iterator
+			{
+				for(int j = 0 ; j < max_row ; j++ )
+				{
+					if(j != 0) // first column has no leading delimiter
+					{
+						cout << ",";
+					}
+					else
+					{
+						// do nothing, no delimiter to remove
+					}
+					// always do these things
+					cout << data[i][j];
+				}
+				cout << endl;
+			}
+		}
 
-//---------------------------------------------------------------------------------------Step Generator (Eloy version) Parameters
-float out = 0;
+};
 
-const int step = 1;
-const int plus_minus = 0;
-const int multi_step = 1;
-const float des_period = 10;
-const float des_amp = .35;
-const int num_steps_mg = 3;
-const float des_delay = 5;
+data_file testing_offsets("./mpu_mag_cal.csv",3,4);
 
-// log file location (relative path)
-std::string file_location = "./LogFiles/";
+testing_offsets.print_data();
 
-data_file mpu_offsets("./mpu_mag_cal.csv",4,3);
-data_file lsm_offsets("./lsm_mag_cal.csv",4,3);
-data_file waypoints_df("./waypoints.csv",1000,3);
 
-// create an object of the type
-wrapped_variable continuous_yaw(360,160);
 
 //---------------------------------------------------------------------------------------------------User Configurable Parameters
 const bool dbmsg_global = false; // set flag to display all debug messages
 bool dbmsg_local  = false; // change in the code at a specific location to view local messages only
-char control_type = 'p'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
-char heading_type = 'u'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm, d=dumb navigation
+char control_type = 's'; // valid options:  p=PID , n=NDI , g=glide (no spin), m=multisine , s=input sweep, c=rc control
+char heading_type = 'd'; // valid otpoins 1=N, 2=E, 3=S, 4=W, u=user, c=rc control, n=navigation algorithm, d=dumb navigation
 float user_heading = 115; //degress, only used if us is the heading type
 bool live_gains = false;
-string filename_str = "";
 
 //----------------------------------------------------------------------------------------------------------------------New Stuff
 const float final_heading = 0; // must be set manually for into the wind
@@ -108,6 +159,16 @@ const float final_heading = 0; // must be set manually for into the wind
 const float max_degrees_per_sample = 1; // corresponds to 100 degrees per second;
 const float radius_of_max_turn = .00001; // corresponds to about a 50ft. turn radius
 float yaw_l_desired_prev = 0;
+
+//------------------------------------------------------------------------------------------------------------System ID Variables
+float A           = -0.7391;
+float B           = -43.362;
+float C           = 17.417;
+float wn_start    = .5;
+float zeta_start  = 2;
+float wn          = 0;
+float zeta        = 0;
+float ki_ndi_start = .005;
 
 //-------------------------------------------------------------------------------------------------------Common Control Variables
 float yaw_desired    = 0;
@@ -139,11 +200,11 @@ float prev_pulse_train = 0; // previous value of pulse_train
 unsigned long long multi_time_offset = 0;
 // ---------------------------------------------------------------------------------------------Frequency Sweep Input Declarations
 float time_sweep = 0; // synthetic time-like signal created by incrementing by the chosen discrete step
-const float total_time = 60; // total duration of the designed sweep in seconds
-const float sweep_amp = 35; // maximum positive amplitude of the sweep, signal is symmetrical as expected
+const float total_time = 30; // total duration of the designed sweep in seconds
+const float sweep_amp = 0.35; // maximum positive amplitude of the sweep, signal is symmetrical as expected
 float phi = 0;
-float wmin = 0.1; // Hz
-float wmax = 20; // Hz
+float wmin = 0.6; // Hz
+float wmax = 60; // Hz
 float c1 = 4;
 float c2 = 0.0187;
 
@@ -190,9 +251,48 @@ double kd_start = .02814;
 
 string control_type_message = "null";
 
+//---------------------------------------------------------------------------------------------------------------Step Input Timer
+int step_counter;
+#define NUM_STEPS 5
+#define STEP_SIZE 0.1
+#define INITIAL_DEFLECTION 0
+const float loop_update_hz = .1;
+
+//-------------------------------------------------------------------------------------------Loop timing (scheduler) Declarations
+#define NUM_LOOPS  9
+bool main_loop_active = true; // will bind this to an RC channel later for online tuning
+struct timeval time_obj;
+unsigned long long tse; // time since epoch (us)
+unsigned long long time_start; // time from the beginning of current program executing (us)
+unsigned long long time_now; // current time since the program starting executing (us)
+
 //---------------------------------------------------------------------------------------------------------Barometer Declarations
-// most barometer variables moved to barometer class
+int baro_step = 0; // declare the step counter (used to delay time from read to caclulate)
+MS5611 barometer; // declare a new barometer object
+// using the barometric equation in region 1 (valid for elevations up to 36,000ft)
+// see wikipedia.org/wiki/Barometric_formula for more information
+// using imperial units (some values use strange mixed units, Kelvin with imperial length?), has been tested and output looks ok
+// CONSTANTS
+const float Pb =  29.92126;    // static reference pressure for barometric equation (inHg)
+const float Tb = 288.815;      // reference temperature for barometric equation (K) !!!not currently using this in the calculation
+const float Lb =   -.0019812;  // standard temperature lapse rate (K/ft)
+const float hb =   0.0;        // refernce height (ft), could be omitted but kept for generality
+const float  R =   8.9494596e4;// universal gas constant (lbft^2)/(lbmolKs^2)
+const float g0 =  32.17405;    // acceleration due to earth's gravity near the surface (ft/s^2)
+const float  M =  28.9644;     // molar mass of earth's air (lb/lbmol)
+// VARIABLES
+float Tc  = 0.0; // temperature (C) <--read directly from sensor
+float Tf  = 0.0; // temperature (F) <--this is not used for any calcs
+float Tk  = 0.0; // temperature (K) <--converted for use in barometric equation
+float Pm  = 0.0; // pressure (mbar) <--read directly from sensor
+float Phg = 0.0; // pressure (inHg) <--converted for use in barometric equation
 float msl = 0.0; // mean sea level altitue (ft) [should be close to 920ft for UMKC Flarsheim]
+
+//----------------------------------------------------------------------------------------------------------RC Input Declarations
+RCInput rcinput{}; const float input_range[2] = {1088,1940}; // range is the same for all channels
+// for PID tuning
+const float output_range[6][2] = {{-.05,.30},{2,-2},{-.185,.500},{-180,180},{-.1,.1},{-.1,.1}};
+float coefficients[6][2];
 
 //---------------------------------------------------------------------------------------------------------------IMU Declarations
 //#define DECLINATION -12.71 //magnetic declination for camp roberts
@@ -208,7 +308,10 @@ float m_mpu[3] ;
 float a_lsm[3] , a_lsm_ahrs[3];
 float g_lsm[3] , g_lsm_ahrs[3];
 float m_lsm[3] ;
-
+//create simple gyro integration for yaw as a fallback
+float yaw_mpu_integrated = 0 , yaw_lsm_integrated = 0;
+float yaw_mpu_integrated_degrees = 0 , yaw_lsm_integrated_degrees = 0;
+float yaw_mpu_integrated_previous = 0 , yaw_lsm_integrated_previous = 0;
 //also need a simple que to store old data points
 float gyro_z_lsm_old[3] = {0,0,0};
 float gyro_z_mpu_old[3] = {0,0,0};
@@ -216,12 +319,12 @@ float gyro_z_mpu_old[3] = {0,0,0};
 //-------------------------------------------------------------------------------------------------------------Servo Declarations
 #define WINCH_RIGHT 1 // right hand winch servo, 1 is the servo rail position
 #define WINCH_LEFT 0 // left hand winch servo, 0 is the servo rail position
-#define MAX_DEFLECTION 200//0.2 // this is used for rigging
-#define LINE_NEUTRAL 0//1.500 // center point for the actuator, range is 1.000-2.000
-#define LINE_OFFSET 55//.055 // think this was used when glide was applied by the "static" actuator after initialization
-#define DEFLECTION_LIMIT 150//.15 // correction, this is used for saturation
-atomic<float> winch_right_cmd(0);
-atomic<float> winch_left_cmd(0);
+#define MAX_DEFLECTION 0.500 // saturation command limits signal to LINE_NEUTRAL+/-MAX_DEFLECTION
+#define LINE_NEUTRAL 1.500 // center point for the actuator, range is 1.000-2.000
+#define LINE_OFFSET .30 // think this was used when glide was applied by the "static" actuator after initialization
+#define DEFLECTION_LIMIT .4 // not sure what this is?
+float winch_right_cmd = 0;
+float winch_left_cmd = 0;
 
 //--------------------------------------------------------------------------------------------------------------AHRS Declarations
 #define PI 3.14159
@@ -248,14 +351,14 @@ float mag_offset_lsm[3] = {-5.388,1.707,72.647};
 float mag_rotation_lsm[3][3] = {{.843,-.192,.088},{-.192,.677,.112},{.088,.112,.949}};
 
 //---------------------------------------------------------------------------------------------------------------GPS Declarations double
-atomic<double> time_gps(0);
-atomic<double> lat(0);
-atomic<double> lng(0);
-atomic<double> alt_ellipsoid(0);
-atomic<double> msl_gps(10000);
-atomic<double> horz_accuracy(0);
-atomic<double> vert_accuracy(0);
-atomic<int> status_gps(0x00); // default condition - no fix
+double time_gps = 0;
+double lat = 0;
+double lng = 0;
+double alt_ellipsoid = 0;
+double msl_gps = 10000;
+double horz_accuracy = 0;
+double vert_accuracy = 0;
+int status_gps = 0x00; // default condition - no fix
 string status_gps_string = "no fix";
 
 //----------------------------------------------------------------------------------------------------------Waypoint Declarations
@@ -265,210 +368,44 @@ double waypoints[50][3]; // waypoint array is 50x3
 //double target[2] = {35.7185462, -120.763599}; // dumb nav, same as drop point
 //double target[2] = {35.6414, -120.68810};
 //double target[2] = {33.397694,-114.273444};
-double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
+//double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
 //double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
 //double target[2] = {32.791300, -111.434883}; // Eloy Area 51 IP
 //double target[2] = {39.016998,-94.585846}; // intersection of 61st street and Morningside
-//double target[2] = {35.7163752, -120.7635108}; // CR in front of vehicle hangar
+double target[2] = {35.7163752, -120.7635108}; // CR in front of vehicle hangar
 
 //-----------------------------------------------------------------------------------------------------------Logfile Declarations
+// these are used to format the filename string
+#define FILENAME_LENGTH 12
+#define FILENAME_OFFSET 4
+// leave extra room for '.csv' and potential '-1', '-2', etc.
+char filename[FILENAME_LENGTH+6];
+// log file location (relative path)
+string file_location = "./LogFiles/";
+// function to check if file exists so that the filename can be dynamically changed
+bool file_exists(string name_of_file){
+	ifstream checkfile(name_of_file); // try to read from the file
+	return bool(checkfile);} // cast the result to bool, if file opens, this returns true (it exists)
+
+// create an object of the type
+wrapped_variable continuous_yaw(360,160);
 
 
 
-void *gpsdriver(void *)
-{
-
-	setpriority(PRIO_PROCESS, 0, -15);
-
-	(void)piHiPri(99);
-	static vector<double> pos_data; // this vector will contain undecoded gps information
-	static Ublox gps;
-	cout << "Initializing GPS......................." << endl;
-	if(!gps.testConnection()){ // check if the gps is working
-		cout << "    --ERROR, GPS not initialized--    " << endl;
-		if(heading_type == 'n'){
-			// stop program executiong if gps won't initialize and navigation heading type is selected
-			cout << "Fatal exception, navigation impossible" << endl;
-			cout << "without GPS, try restarting..........." << endl;
-			// return EXIT_FAILURE;}}
-	}}
-	else{ // gps is good!
-		cout << "  --GPS successfully initialized--    " << endl;}
-	while(true)
-	{
-		if (gps.decodeSingleMessage(Ublox::NAV_POSLLH, pos_data) == 1)
-		{
-			time_gps = pos_data[0]/1000.00000;
-			lng = pos_data[1]/10000000.00000;
-			lat = pos_data[2]/10000000.00000;
-			alt_ellipsoid = (pos_data[3]/1000.00000)*3.28;
-			msl_gps = (pos_data[4]/1000.00000)*3.28;
-			horz_accuracy = (pos_data[5]/1000.00000)*3.28;
-			vert_accuracy = (pos_data[6]/1000.00000)*3.28;
-		}
-		if (gps.decodeSingleMessage(Ublox::NAV_STATUS, pos_data) == 1)
-		{
- 			status_gps = (int)pos_data[0];
-		}
-
-		usleep(.5*1000000);
-
-	}
-
-	pthread_exit(NULL);
-}
 
 
-int enci1;
-int enci2;
-
-void *roboteqdriver(void *)
-{
-
-	setpriority(PRIO_PROCESS, 0, -15);
-
-	string serailmotorstring;
-	string prefix = "!G 1 ";
-	string suffix = "\r";
-
-	string tempstring;
-
-	char serial_output = '+';
-
-	int cmd1;
-	int cmd2;
-
-	std::string serialmotor1;
-	std::string charcmd1;
-
-	std::string serialmotor2;
-	std::string charcmd2;
-
-	int enci1;
-	int enci2;
-
-	while(true)
-	{
-
-		charcmd1 = to_string(cmd1);
-		charcmd2 = to_string(cmd2);
-
-		cmd1 = winch_right_cmd.load(memory_order_relaxed);
-		cmd2 = winch_left_cmd.load(memory_order_relaxed);
-
-		char serial_output;
-		serial_output = '+';
-
-		// MOTOR 1
-
-		serialmotor1 = "!G 1 ";
-		serialmotor1 += charcmd1;
-		serialmotor1 += "\r";
-
-		const char * charmotor1 = serialmotor1.c_str();
-		serialPuts(serial_port,charmotor1);
-
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-		}
-
-		serial_output = serialGetchar(serial_port);
-		serial_output = serialGetchar(serial_port);
-
-		serialPuts(serial_port,"?F 1\r");
-
-		serial_output = serialGetchar(serial_port);
-
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-		}
-
-		serial_output = serialGetchar(serial_port);
-		serial_output = serialGetchar(serial_port);
-
-		std::string enc1 ("");
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-			enc1 += serial_output;
-		}
-
-		enc1.erase(enc1.size()-1);
-		enci1 = stoi(enc1);
-
-		serial_output = '+';
-
-		serialmotor2 = "!G 2 ";
-		serialmotor2 += charcmd2;
-		serialmotor2 += "\r";
-
-		const char * charmotor2 = serialmotor2.c_str();
-		serialPuts(serial_port,charmotor2);
-
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-		}
-
-		serial_output = serialGetchar(serial_port);
-		serial_output = serialGetchar(serial_port);
-
-		serialPuts(serial_port,"?F 2\r");
-		serial_output = serialGetchar(serial_port);
-
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-		}
-
-		serial_output = serialGetchar(serial_port);
-		serial_output = serialGetchar(serial_port);
-
-		std::string enc2 ("");
-		while(serial_output != '\r')
-		{
-			serial_output = serialGetchar(serial_port);
-			enc2 += serial_output;
-		}
-
-		enc2.erase(enc2.size()-1);
-
-		enci2 = stoi(enc2);
-
-		// 1,000,000us = 1s
-		usleep(.02*1000000);
-
-	}
-
-	pthread_exit(NULL);
-
-}
 
 int main( int argc , char *argv[])
 {
 
-	setpriority(PRIO_PROCESS, 0, -20);
 
-	// when they were initialized, the data_file objects mpu_offsets and lsm_offsets automatically read in the file contents
-	// now to make the information contained in the calibration file useful we need to split it into a magnetometer offset
-	// vector and a 3x3 rotation matrix
-	mpu_offsets.row2array(mag_offset_mpu,1);
-	lsm_offsets.row2array(mag_offset_lsm,1);
-	for( int i = 0; i < 3 ; i++ )
-	{
-		mpu_offsets.row2array(mag_rotation_mpu[i],i+2);
-		lsm_offsets.row2array(mag_rotation_lsm[i],i+2);
-	}
 
+	//----------------------------------------------------------------------------------------------------------------File Title Prefix
 	double kp = kp_start*.0175; // convert all 3 to radians
 	double ki = ki_start*.0175;
 	double kd = kd_start*.0175;
-	// float ki_ndi = ki_ndi_start*.0175; // convert to radians
+	float ki_ndi = ki_ndi_start*.0175; // convert to radians
 	int multisine_counter = 0;
-
-	//--------------------------------------------------------------------------------------------------Read and Handle Program Options
 	int parameter; // parameter is the argument passed in with the program call, create it here
 	char *logfile_prefix; // pointer to a character array which will contain the log_file prefix when using the -d parameter
 	string logfile_prefix_string; // previous variable will be converted to a string before using it to make a file
@@ -503,30 +440,151 @@ int main( int argc , char *argv[])
 			case '?' : cout << "Invalid option.  Use -h for help" << endl; return EXIT_FAILURE;}}
 
 
+	cout << endl;
+	cout << "=======================================" << endl;
+	cout << "         Begin Initialiation           " << endl;
+	cout << "=======================================" << endl;
+	cout << endl;
+	cout << "Reading mag calibration from file......" << endl;
+	ifs.open ("./mpu_mag_cal.csv"); // name of the mpu mag calibration file
+	if(ifs){ // if successful, read the values and print a message
+		cout << "MPU9250 offsets:" << endl;
+	for(int i = 0 ; i < 3 ; i++ ){ // colum iterator, offsets are the first row (1x3) inside the 4x3 data file
+		if(i != 0){ // on the first and last iteration there is no comma to catch
+			cout << ", "; // print a comma to make output readable
+			char delim; // create a character inside this scope, it is just a dummy variable
+			ifs >> delim;} // stream the comma to the dummy character so it can be discarded
+		ifs >> mag_offset_mpu[i]; // stream the offsets into the correct position in the offset array
+		cout << mag_offset_mpu[i];} // output the offset array to the console
+	cout << endl; // end line, prepare to read/write the rotation matrix
+	cout << "MPU9250 rotation matrix:" << endl;
+	for(int i = 0 ; i < 3 ; i++ ){ // row iterator, matrix is 3x3
+		for(int j = 0 ; j < 3 ; j++ ){ // column iterator
+			if(j != 0){ // on the first and last iteration there is no comma to catch
+				cout << ", "; // print a comma to make the output readable
+				char delim; // create a character inside this scope, it is just a dummy variable
+				ifs >> delim;} // stream the comma to the dummy character so it can be discarded
+			ifs >> mag_rotation_mpu[i][j]; // stream the rotation matrix values to the correct positions in the array
+			cout << mag_rotation_mpu[i][j];} // output the rotation matrix to the console
+		cout << endl;}}
+	else{ // if the file open operation is not successful
+	cout << "Cannot read MPU offsets, using defaults" << endl;} // print that the file could not be read, this is not a fatal error
+	ifs.close(); // close the current file to prepare for the next file read operation
 
-	cout << endl << MSG_BAR << endl;
-	cout << "         Begin Initialiation           ";
-	cout << endl << MSG_BAR << endl;
+// ---not going to duplicate comments, this next section is just the same as above except for a different sensor
+	ifs.open("./lsm_mag_cal.csv");
+	if(ifs){
+		cout << "LSM9DS1 offsets:" << endl;
+		for(int i = 0 ; i < 3 ; i++ ){
+			if(i != 0){
+				cout << ", ";
+				char delim;
+				ifs >> delim;}
+			ifs >> mag_offset_lsm[i];
+			cout << mag_offset_lsm[i];}
+		cout << endl;
+		cout << "LSM9DS1 rotation matrix:" << endl;
+		for(int i = 0 ; i < 3 ; i++ ){
+			for(int j = 0 ; j < 3 ; j++ ){
+				if(j != 0){
+					cout << ", ";
+					char delim;
+					ifs >> delim;}
+				ifs >> mag_rotation_lsm[i][j];
+				cout << mag_rotation_lsm[i][j];}
+			if(i < 2){
+				cout << endl;}}}
+	else{
+		cout << "Cannot read LSM offsets, using defaults";}
+	ifs.close();
 
-	// create an object of type vehicle called parachute
-	vehicle parachute;
-/*
-	parachute.pwm_out.init(0);
-	parachute.pwm_out.init(1);
+	// propogate the waypoints matrix with 0's, the value 0 will be used to mark the end of valid data
+	for(int i = 0 ; i < 50 ; i++ ){
+		for(int j = 0 ; j < 3 ; j++){
+			//cout << "we made it to here" << endl;
+			waypoints[i][j] = 0;}} // fill with zeros, this will mark the EOF
 
-	parachute.pwm_out.enable(0);
-	parachute.pwm_out.enable(1);
+	// read in the waypoints file
+	ifs.open("./waypoints.csv");
+	if(ifs){
+		cout << endl << "Reading waypoints from file............" << endl;
+		cout << "lat\tlong\talt" << endl;
+		for(int i = 0 ; i < 50 ; i++ ){ // row iterator
+			for(int j = 0 ; j < 3 ; j++){ // column iterator
+				if(j!=0){
+					if(waypoints[i][j] != 0){
+						cout << ",";}
+					char delim;
+					ifs >> delim;}
+				ifs >> waypoints[i][j];
+				}
 
-	parachute.pwm_out.set_period(0,50);
-	parachute.pwm_out.set_period(1,50);
+			}}
+/*		for(int i = 0 ; i < 50 ; i++){
+			for(int j = 0 ; j < 3 ; j++){
+				if(waypoints[i][0]!=0){
+					cout << waypoints[i][j];
+					if(j!=2){
+						cout << ",";}}}
+				if(waypoints[i+1][0] != 0){
+					cout << endl;}}}
 */
+	else{
+		cout << "Could not read waypoints" << endl;
+		if(heading_type = 'n'){
+			cout << "Halting execution, cannot navigate without waypoints" << endl;
+			// end execution if a navigation heading is being used but there are not waypoints
+			return EXIT_FAILURE;}
+	}
 
-	// loop scheduler variables have been moved to scheduler class
-	// barometer initialization moved to barometer class
 
-	parachute.timer.update_time();
 
-	// rc initialization has been moved to remote_control class
+	//-------------------------------------------------------------------------------------------Loop timing (scheduler) Initialization
+	// initialize the time variables
+	gettimeofday(&time_obj, NULL); // standard unix function to get the current time since epoch
+	tse          = time_obj.tv_sec*1000000LL + time_obj.tv_usec; // time since epoch (converted to microseconds)
+	time_start = tse; // time since epoch (ms), will be used to calculate time since start (beginning at 0us)
+
+	// declare the scheduler frequencies
+	cout << endl;
+	cout << "Establishing loop frequencies.........." << endl;
+	// 8-4-2017 changed all timer related variables to long long, timer variable (int) was overflowing and causing erratic timing
+	// if code had been running for ~35 minutes, tested after fixing and overflow is no longer occuring after 35 minutes
+	const float frequency [NUM_LOOPS] = {300,1000,1,100,50,20,10,loop_update_hz,1}; //Hz
+	unsigned long long duration [NUM_LOOPS]; // stores the expected time since last execution for a given loop
+	unsigned long long timer [NUM_LOOPS]; // stores the time since the last execution in a given loop
+	unsigned long long watcher [NUM_LOOPS]; // used for monitoring actual timer loop durations
+
+	// calculate the scheduler us delay durations and populate the timer array with zeros
+	cout << "Calculating loop delay durations......." << endl;
+	cout << "Populating loop timers................." << endl;
+	for(int i = 0 ; i < NUM_LOOPS ; i++){ // populate the durations using the passed values for frequency, echo everything to the console
+		duration[i] = 1000000/frequency[i];
+		if(dbmsg_global || dbmsg_local){cout << "Frequency is " << frequency[i] << "(Hz), duration is " << duration[i] << "(us)"<< endl;}
+		timer[i] = 0;
+		if(dbmsg_global || dbmsg_local){cout << "Timer is set to " << timer[i] << "(us), should all be zero" << endl;}
+		watcher[i] = 0;}
+	//---------------------------------------------------------------------------------------------------------Barometer Initialization
+	cout << "Initializing barometer................." << endl;
+	barometer.initialize();
+	cout << " --Barometer successfully initalized-- " << endl;
+	//----------------------------------------------------------------------------------------------------------RC Input Initialization
+	cout << "Initilizing RC Input..................." << endl;
+	rcinput.init();
+	int rc_array [rcinput.channel_count]; // array for holding the values which are read from the controller
+	float rc_array_scaled [rcinput.channel_count]; // array for holding the scaled values
+	for(int i = 0 ; i < rcinput.channel_count ; i++ ){
+		rc_array[i] = rcinput.read(i);} // read in each value using the private class function (converts to int automatically)
+	cout << "Currently using " << rcinput.channel_count << " channels............." << endl;
+	cout << " --RC Input successfully initialized-- " << endl;
+	cout << "Creating RC Input range coefficients   " << endl;
+	for(int i = 0 ; i < rcinput.channel_count ; i++){ // using a custom class for converting bounded values to values in a new range
+		// in the Python version of this function, both parameters are returned by one function
+		// since multiple values may not be returned by a single function this version uses a function for each scaling parameter
+		coefficients[i][0] = calculate_slope(input_range,output_range[i]); // first call the slope calculator
+		coefficients[i][1] = calculate_intercept(input_range,output_range[i],coefficients[i][0]); // next calculate the intercept
+	}
+	cout << "Successfully created range coefficients" << endl;
 
 	//---------------------------------------------------------------------------------------------------------------IMU Initialization
 	cout << "Initializing IMUs......................" << endl;
@@ -541,9 +599,26 @@ int main( int argc , char *argv[])
 	cout << "Populating IMU sensor arrays..........." << endl;
 	for(int i = 0; i < 3 ; i++){ // seed everything with a value of 0
 		a_mpu[i]=g_mpu[i]=m_mpu[i]=a_lsm[i]=g_lsm[i]=m_lsm[i] = 0.0;}
-
-	// servo initialization moved to vehicle class
-
+	//-------------------------------------------------------------------------------------------------------------Servo Initialization
+	cout << "Initializing PWM Output................" << endl;
+	PWM pwm_out;
+	// create pwm output object and initialize right and left winch servos, stop execution if servos cannot be initialized
+	// NOTE!!! if the code is erroring out here, the first thing to check is to make sure that you are are running the code with sudo
+	if(!pwm_out.init(WINCH_RIGHT)){ // right hand side winch servo
+		cout << "Cannot Initialize East Side Winch Servo" << endl;
+		cout << "Make sure you are root" << endl;
+		return EXIT_FAILURE;}
+	if(!pwm_out.init(WINCH_LEFT)){ // left hand side winch servo
+		cout << "Cannot Initialize West Side Winch Servo" << endl;
+		cout << "Make sure you are root" << endl;
+		return EXIT_FAILURE;}
+	cout << "Enabling PWM output channels..........." << endl;
+	pwm_out.enable(WINCH_RIGHT); // both init() and enable() must be called to use the PWM output on a particular pin
+	pwm_out.enable(WINCH_LEFT);
+	cout << "Setting PWM period for 50Hz............" << endl;
+	pwm_out.set_period(WINCH_RIGHT , 50); // set the PWM frequency to 50Hz
+	pwm_out.set_period(WINCH_LEFT , 50);
+	cout << "  --PWM Output successfully enabled-- " << endl;
 	//--------------------------------------------------------------------------------------------------------------ADC Initialization
 	cout << "Initializing ADC......................." << endl;
 	ADC adc{};
@@ -565,13 +640,19 @@ int main( int argc , char *argv[])
 		lsm->update(); // update the lsm sensor
 		lsm->read_gyroscope(&g_lsm[0],&g_lsm[1],&g_lsm[2]); // read the updated info
 		//read 100 samples from each gyroscope axis on each sensor
-		offset_mpu[0] -= g_mpu[0];
-		offset_mpu[1] -= g_mpu[1];
-		offset_mpu[2] -= g_mpu[2];
-		offset_lsm[0] -= g_lsm[0];
-		offset_lsm[1] -= g_lsm[1];
-		offset_lsm[2] -= g_lsm[2];
-
+		g_mpu[0] *= 180/PI;
+		g_mpu[1] *= 180/PI;
+		g_mpu[2] *= 180/PI;
+		g_lsm[0] *= 180/PI;
+		g_lsm[1] *= 180/PI;
+		g_lsm[2] *= 180/PI;
+		//populate the offset arrays
+		offset_mpu[0] += (-g_mpu[0]*0.0175);
+		offset_mpu[1] += (-g_mpu[1]*0.0175);
+		offset_mpu[2] += (-g_mpu[2]*0.0175);
+		offset_lsm[0] += (-g_lsm[0]*0.0175);
+		offset_lsm[1] += (-g_lsm[1]*0.0175);
+		offset_lsm[2] += (-g_lsm[2]*0.0175);
 		//wait a bit before reading gyro again
 		usleep(10000);}
 	cout << "Calculating gyroscope offsets.........." << endl;
@@ -600,108 +681,67 @@ int main( int argc , char *argv[])
 	cout << "-Magnetometer rotations stored in AHRS-" << endl;
 
 	//---------------------------------------------------------------------------------------------------------------GPS Initialization
-
-	// NOTE:  GPS initialization moved to threaded function to avoid scoping issues
-
-	int wind_level_index = 0;
-
-	pthread_t threadgps;
-
-	int thr1 = pthread_create(&threadgps, NULL, gpsdriver, NULL);
-
-	if(thr1)
-	{
-		cout << "Error: unable to create thread" << endl;
-	}
-
-	cout << "      --GPS thread enabled--     " << endl;
-
-	//------------------------------------------------------------------------------------------------------------Serial Initialization
-	//cout << "Initializing Serial Output............" << endl;
-	//int serialHandle = serialOpen("/dev/ttyAMA0", 9600);
-	//cout << "--Serial Output successfully opened --" << endl;
-
-	cout << "Opening serial port.........." << endl;
-	serial_port = serialOpen("/dev/ttyAMA0",115200);
-	wiringPiSetup() == -1;
-	cout << "     --Serial UART enabled--     " << endl;
-
-
-	pthread_t threadserial;
-
-	cout << "Opening serial thread........" << endl;
-
-	int thr2 = pthread_create(&threadserial, NULL, roboteqdriver, NULL);
-
-	if(thr2)
-	{
-		cout << "Error: unable to create thread" << endl;
-	}
-
-	cout << "    --Serial thread enabled--    " << endl;
+	vector<double> pos_data; // this vector will contain undecoded gps information
+	int wind_level_index = 0; // this is the counter for the current altitude level used in the navigation algorithm
+	Ublox gps;
+	cout << "Initializing GPS......................." << endl;
+	if(!gps.testConnection()){ // check if the gps is working
+		cout << "    --ERROR, GPS not initialized--    " << endl;
+		if(heading_type == 'n'){
+			// stop program executiong if gps won't initialize and navigation heading type is selected
+			cout << "Fatal exception, navigation impossible" << endl;
+			cout << "without GPS, try restarting..........." << endl;
+			return EXIT_FAILURE;}}
+	else{ // gps is good!
+		cout << "  --GPS successfully initialized--    " << endl;}
+	cout << "Initializing Serial Output............" << endl;
+	int serialHandle = serialOpen("/dev/ttyAMA0", 9600);
+	cout << "--Serial Output successfully opened --" << endl;
 
 	//------------------------------------------------------------------------------------------------------------------Welcome Message
 	usleep(500000);
 	cout << endl;
-	cout << MSG_BAR << endl;
+	cout << "=======================================" << endl;
 	cout << "Initialization completed..............." << endl;
-	cout << MSG_BAR << endl << endl;
+	cout << "=======================================" << endl << endl;
 	usleep(500000);
-	cout << MSG_BAR << endl;
+	cout << "=======================================" << endl;
 	cout << "Main Loop starting now................." << endl;
-	cout << MSG_BAR << endl << endl;
+	cout << "=======================================" << endl << endl;
 	usleep(500000);
 
 	//----------------------------------------------------------------------------------------------------------Log File Initialization
 	while(true)
 	{
 		int standby_message_timer = 0; // used to limit the frequency of the standby message
-//		while(!(adc_array[4] < 4000)){
-//		while(!((parachute.rc.get_raw(5)>1500)&&(adc_array[4]<4000))){
-bool temp_flag = false; // uncomment for testing with no transmitter
-while(!temp_flag){ // uncomment for testing with no transmitter
+		while(!(adc_array[4] < 4000)){
+//		while(!((rc_array[5]>1500)&&(adc_array[4]<4000))){
+//bool temp_flag = false; // uncomment for testing with no transmitter
+//while(!temp_flag){ // uncomment for testing with no transmitter
 			if(standby_message_timer > 250){
 				cout << endl << "---------------------------------------" << endl << "           Autopilot Inactive         " << endl;
 				cout << "  Dynamic Lines at Neutral Deflection " << endl;
-				cout << "       Battery Voltage:  " << adc_array[2]/100 << " V" << endl;
 				cout << "         Waiting for Killswitch       " << endl << "--------------------------------------" << endl;
 				standby_message_timer = 0;}
 			// when the autopilot is inactive, set both winches to the neutral deflection
-//			cout << "\t" << LINE_NEUTRAL << endl;
-//			parachute.pwm_out.set_period(0,50);
-//			parachute.pwm_out.set_period(0,50);
-//			parachute.pwm_out.set_duty_cycle(0,1.5);
-//			parachute.pwm_out.set_duty_cycle(1,1.5);
-			parachute.pwm_out.set_duty_cycle(WINCH_RIGHT, LINE_NEUTRAL);
-			parachute.pwm_out.set_duty_cycle(WINCH_LEFT, LINE_NEUTRAL);
-
+			pwm_out.set_duty_cycle(WINCH_RIGHT, LINE_NEUTRAL);
+			pwm_out.set_duty_cycle(WINCH_LEFT, LINE_NEUTRAL);
 			// since this loop executes based on an rc and an adc condition, we have to poll these devices for new status
-			// rc_array[5] = parachute.rc.get_raw(5);
-
-			parachute.rc.update();
-
+			rc_array[5] = rcinput.read(5);
 			adc_array[4] = adc.read(4);
-			adc_array[2] = adc.read(2);
 			// step counter needs to be set to zero also, this is a hack because the numbering is messed up in the code
 			// we start at negative one here and presumably the counter is incremented before 1st execution
+			step_counter = -1;
 			usleep(5000);
 			standby_message_timer++; // increment the message delay timer
 			// everything that needs to be set to zero by the killswitch goes here
 			continuous_yaw.reset_wrap_counter();
 			time_sweep = 0;
 			multisine_counter = 0; // time counter for the multisine input
-
-			error_outer_loop = 0;
-			error_sum_outer_loop = 0;
-			yaw_rate_desired = 0;
-			error_model = 0;
-			cmd_adapt = 0;
-			p1 = .017;
-			p2 = 0;
-			p1_d = 0;
-			p2_d = 0;
-
-
+			yaw_mpu_integrated = 0; // integrated yaw
+			yaw_mpu_integrated_previous = 0;
+			yaw_lsm_integrated = 0;
+			yaw_lsm_integrated_previous = 0;
 //			wind_level_index = 0; // wind level for navigation, can only be incremented by the main loop to avoid "waypoint indecision"
 			for(int i = 0 ; i < 3 ; i++){
 				gyro_z_lsm_old[i] = 0;
@@ -710,27 +750,59 @@ while(!temp_flag){ // uncomment for testing with no transmitter
 			yaw_error_sum       = 0; // prevent integral wind up
 			yaw_error           = 0;
 			yaw_error_previous  = 0;
-temp_flag = true; // uncomment for testing with no transmitter
+//temp_flag = true; // uncomment for testing with no transmitter
 
 		}
-
 		time_t result = time(NULL);
-		char *today = asctime(localtime(&result));
-		cout << filename_str << endl;
-		filename_str = generate_filename(logfile_prefix_string);
-
+		char *today = asctime(localtime(&result)); // establish char array to write today's date
+		today[strlen(today) - 1] = '\0'; // remove end line from the end of the character array
+		// remove spaces, remove colons, only keep the month/day/hour/minute
+		for(int i = 0 ; i < FILENAME_LENGTH ; i++){
+			if(today[i+FILENAME_OFFSET] == ' ' || today[i+FILENAME_OFFSET] == ':'){
+				if(i == 8 - FILENAME_OFFSET) {
+					filename[i] = '0';} // add leading zero in front of 1 digit day
+				else{
+					filename[i] = '_';}}
+			else{
+				filename[i] = today[i+FILENAME_OFFSET];}}
+		// add .csv to the end of the file
+		filename[FILENAME_LENGTH+0] = '-';
+		filename[FILENAME_LENGTH+1] = '0';
+		filename[FILENAME_LENGTH+2] = '.';
+		filename[FILENAME_LENGTH+3] = 'c';
+		filename[FILENAME_LENGTH+4] = 's';
+		filename[FILENAME_LENGTH+5] = 'v';
+		// for adding the relative path to the file, it will be converted to a string
+		string filename_str(filename);
+		//cout << "filename_str" << filename_str << endl;
+		filename_str = logfile_prefix_string+filename_str;
+		// used to put a number on the end of the file if it is a duplicate
+		int filename_index = 1;
+		// loop while the file name already exists or until we are out of indices to write to
+		cout << endl << "Setting up log file...................." << endl;
+		cout << "Checking for unique file name.........." << endl;
+		while(file_exists(filename_str))
+		{
+		cout << "Filename already exists................" << endl;
+			filename[FILENAME_LENGTH+0] = '-';
+			filename[FILENAME_LENGTH+1] = filename_index + '0';
+			filename[FILENAME_LENGTH+2] = '.';
+			filename[FILENAME_LENGTH+3] = 'c';
+			filename[FILENAME_LENGTH+4] = 's';
+			filename[FILENAME_LENGTH+5] = 'v';
+			string temp(filename);
+			filename_str = logfile_prefix_string+temp;
+			filename_index++;
+			usleep(50000);} // don't try to read the files at warp speed
 		// create the file output stream object
 		ofstream fout;
 		// open the file
 		cout << "Log file created at: " << endl << filename_str << endl << endl;
 		fout.open(filename_str,ios::out);
 		// header string
-		fout <<
-			"today,microseconds_since_start,"
-			"msl,"
-			"rc0,rc1,rc2,rc3,rc4,rc5,"
+		fout << "today,microseconds_since_start,"
+			"msl,rc0,rc1,rc2,rc3,rc4,rc5,"
 			"rc0_scaled,rc1_scaled,rc2_scaled,rc3_scaled,rc4_scaled,rc5_scaled,"
-			"adc_array0,adc_array1,adc_array2,adc_array3,adc_array4,adc_array5,"
 			"roll_mpu_mahony,pitch_mpu_mahony,yaw_mpu_mahony,"
 			"roll_lsm_mahony,pitch_lsm_mahony,yaw_lsm_mahony,"
 			"roll_mpu_madgwick,pitch_mpu_madgwick,yaw_mpu_madgwick,"
@@ -738,33 +810,22 @@ temp_flag = true; // uncomment for testing with no transmitter
 			"a_mpu[0],a_mpu[1],a_mpu[2],a_lsm[0],a_lsm[1],a_lsm[2],"
 			"g_mpu[0],g_mpu[1],g_mpu[2],g_lsm[0],g_lsm[1],g_lsm[2],"
 			"m_mpu[0],m_mpu[1],m_mpu[2],m_lsm[0],m_lsm[1],m_lsm[2],"
-			"winch_right_cmd,winch_left_cmd,"
-			"kp,ki,kd,"
-			"yaw_desired,yaw_error,yaw_error_previous,yaw_error_rate,yaw_error_sum,"
-			"control_type,heading_type,"
-			"time_gps,lat,lng,alt_ellipsoid,msl_gps,horz_accuracy,vert_accuracy,status_gps,status_gps_string,"
-			"lat_waypoint,lng_waypoint,"
+			"winch_right_cmd,winch_left_cmd,yaw_integrated_mpu,yaw_integrated_lsm,"
+			"A,B,C,wn,zeta,kp,ki,kd,"
+			"yaw_desired,yaw_error,yaw_error_previous,yaw_error_rate,yaw_error_sum,adc_array[5],control_type,heading_type,"
+			"time_gps,lat,lng,alt_ellipsoid,msl_gps,horz_accuracy,vert_accuracy,"
+			"status_gps,lat_waypoint,lng_waypoint,"
 			"yaw_l_desired,yaw_l_error,yaw_l_error_previous,yaw_l_error_rate,yaw_l_error_sum,"
-			"l1,l2,kp_outer_loop,ki_outer_loop,error_outer_loop,error_sum_outer_loop,yaw_rate_desired,yaw_rate_model,cmd_adapt,error_model,"
-			"p1,p2,p1_d,p2_d,enc1,enc2"
-			<< endl;
+			"final_heading,max_degrees_per_sample" << endl;
 		usleep(20000);
 		//everything that needs to be set to zero by the killswitch goes here
 		continuous_yaw.reset_wrap_counter();
 		time_sweep = 0;
 		multisine_counter = 0;
-
-		error_outer_loop = 0;
-		error_sum_outer_loop = 0;
-		yaw_rate_desired = 0;
-		cmd_adapt = 0;
-		error_model = 0;
-		p1 = .017;
-		p2 = 0;
-		p1_d = 0;
-		p2_d = 0;
-
-
+		yaw_mpu_integrated = 0;
+		yaw_mpu_integrated_previous = 0;
+		yaw_lsm_integrated = 0;
+		yaw_lsm_integrated_previous = 0;
 		for(int i = 0 ; i < 3 ; i++){
 			gyro_z_lsm_old[i] = 0;
 			gyro_z_mpu_old[i] = 0;
@@ -775,25 +836,21 @@ temp_flag = true; // uncomment for testing with no transmitter
 		num_wraps = 0;
 		yaw_prev = 0;
 
-//	while(adc_array[4] < 4000) // while condition for arm lanyard only
-//	while((parachute.rc.get_raw(5)>1500)&&(adc_array[4]<4000)) // this is to be used when an RC transmitter is present as well as the arm lanyard
-while(true)
+	while(adc_array[4] < 4000)
+//	while((rc_array[5]>1500)&&(adc_array[4]<4000)) // this is to be used when an RC transmitter is present as well as the arm lanyard
+//while(true)
 	{
-/* 		// refresh time now to prepare for another loop execution
+		// refresh time now to prepare for another loop execution
 		gettimeofday(&time_obj, NULL); // must first update the time_obj
 		tse        = time_obj.tv_sec*1000000LL + time_obj.tv_usec; // update tse (us)
 		//tse        = tse + 2000000000; // uncomment to test integer overflow fix
-		time_now   = tse - time_start; // calculate the time since execution start by subtracting off tse */
+		time_now   = tse - time_start; // calculate the time since execution start by subtracting off tse
 
-		parachute.timer.update_time();
-
-		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(0)) > parachute.timer.get_duration(0))
+		if( (time_now-timer[0]) > duration[0])
 		{
 			//----------------------------------------------------------------------------------------------------------------AHRS Update
-			dt = parachute.timer.get_current_time()-parachute.timer.get_timer(0);
+			dt = time_now-timer[0];
 			dt = dt/1000000.0; // convert from useconds
-
-
 
 			if(wind_level_index<49){
 				if(msl_gps < waypoints[wind_level_index][2]){
@@ -828,6 +885,11 @@ while(true)
 			ahrs_lsm_mahony.updateMahony(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,m_lsm[0],m_lsm[1],m_lsm[2],dt);
 			ahrs_mpu_madgwick.updateMadgwick(a_mpu_ahrs[0],a_mpu_ahrs[1],a_mpu_ahrs[2],g_mpu_ahrs[0]*0.0175,g_mpu_ahrs[1]*0.0175,g_mpu_ahrs[2]*0.0175,m_mpu[0],m_mpu[1],m_mpu[2],dt);
 			ahrs_lsm_madgwick.updateMadgwick(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,m_lsm[0],m_lsm[1],m_lsm[2],dt);
+			//uncomment for non-global framed ahrs (no magnetometer)
+//			ahrs_mpu_mahony.updateMahonyIMU(a_mpu_ahrs[0],a_mpu_ahrs[1],a_mpu_ahrs[2],g_mpu_ahrs[0]*0.0175,g_mpu_ahrs[1]*0.0175,g_mpu_ahrs[2]*0.0175,dt);
+//			ahrs_lsm_mahony.updateMahonyIMU(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,dt);
+//			ahrs_mpu_madgwick.updateMadgwickIMU(a_mpu_ahrs[0],a_mpu_ahrs[1],a_mpu_ahrs[2],g_mpu_ahrs[0]*0.0175,g_mpu_ahrs[1]*0.0175,g_mpu_ahrs[2]*0.0175,dt);
+//			ahrs_lsm_madgwick.updateMadgwickIMU(a_lsm_ahrs[0],a_lsm_ahrs[1],a_lsm_ahrs[2],g_lsm_ahrs[0]*0.0175,g_lsm_ahrs[1]*0.0175,g_lsm_ahrs[2]*0.0175,dt);
 
 			// update the que holding the old gyro values with the new gyro information
 			gyro_z_mpu_old[2] = gyro_z_mpu_old[1];
@@ -836,74 +898,76 @@ while(true)
 			gyro_z_lsm_old[2] = gyro_z_lsm_old[1];
 			gyro_z_lsm_old[1] = gyro_z_lsm_old[0];
 			gyro_z_lsm_old[0] = g_lsm_ahrs[2]-offset_lsm[2];
+			// update previous integrated yaw variables
+			yaw_mpu_integrated_previous = yaw_mpu_integrated;
+			yaw_lsm_integrated_previous = yaw_lsm_integrated;
 
+			//update the integrated gyro yaw (this is a fallback in case the heading is bad)
+			yaw_mpu_integrated = (((gyro_z_mpu_old[0]+gyro_z_mpu_old[1])/2)*dt) + yaw_mpu_integrated_previous;
+			yaw_mpu_integrated_degrees = yaw_mpu_integrated * (180/PI);
+			yaw_lsm_integrated = (((gyro_z_lsm_old[0]+gyro_z_lsm_old[1])/2)*dt) + yaw_lsm_integrated_previous;
+			yaw_lsm_integrated_degrees = yaw_lsm_integrated * (180/PI);
 
-
-			parachute.timer.update_watcher(0); // used to check loop frequency
-			parachute.timer.update_timer(0);
+			watcher[0] = time_now - timer[0]; // used to check loop frequency
+			timer[0] = time_now;
 		}
 
-		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(1)) > parachute.timer.get_duration(1))
+		if( (time_now-timer[1]) > duration[1])
 		{
-			// GPS which was previously in this section is now threaded
-			parachute.timer.update_watcher(1); // used to check loop frequency
-			parachute.timer.update_timer(1);
+			if (gps.decodeSingleMessage(Ublox::NAV_POSLLH, pos_data) == 1)
+			{
+				// examples provided with Navio2 have gps code which is designed to run in a threaded program, the gps update
+				// functions block execution, for this code, the functions have been modified, the gps is polled here at 1000hz
+				// but valid new data only comes through occasionally, the NAV_STATUS message has been disabled entireley because
+				// it was causing .75 second interruptions in the timer loop, in the future threading will be utilized for the
+				// gps (then the imu and ahrs may be added to separate threads as well)
+	                	time_gps = pos_data[0]/1000.00000;
+		       	        lng = pos_data[1]/10000000.00000;
+        	       		lat = pos_data[2]/10000000.00000;
+	        	        alt_ellipsoid = (pos_data[3]/1000.00000)*3.28;
+		               	msl_gps = (pos_data[4]/1000.00000)*3.28;
+//				msl_gps = 500+step_counter*400; //uncomment to test navigation algorithm
+        		        horz_accuracy = (pos_data[5]/1000.00000)*3.28;
+	                	vert_accuracy = (pos_data[6]/1000.00000)*3.28;
+			}
+			watcher[1] = time_now - timer[1]; // used to check loop frequency
+			timer[1] = time_now;
 			}
 
-		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(2)) > parachute.timer.get_duration(2))
+		if( (time_now-timer[2]) > duration[2])
 		{
-
-			// testing maneuver generator at Natick AGU speed of 5Hz
-//			out = maneuver_generator(step,plus_minus,multi_step,des_period,des_amp,num_steps_mg,des_delay);
-
-//			if(msl_gps < 2700)
-//			{
-//				heading_type = 'd'; // dumb nav
-//				control_type = 'p'; // PID
-//			}
-//			else
-//			{
-//				heading_type = 'x'; // default north
-//				control_type = 's'; // sweep (set for mstep)
-//			}
-
-			parachute.timer.update_watcher(2); // used to check loop frequency
-			parachute.timer.update_timer(2);
+			watcher[2] = time_now - timer[2]; // used to check loop frequency
+			timer[2] = time_now;
 		}
 
-		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(3)) > parachute.timer.get_duration(3))
+		if( (time_now-timer[3]) > duration[3])
 		{
+			//-------------------------------------------------------------------------------------------------------------Barometer Read
+			if(baro_step == 0){
+				barometer.refreshPressure();}
+			else if(baro_step == 1){
+				barometer.readPressure();}
+			else if(baro_step == 2){
+				barometer.refreshTemperature();}
+			else if(baro_step == 3){
+				barometer.readTemperature();}
+			else if(baro_step == 4){
+				barometer.calculatePressureAndTemperature();
+				baro_step = -1;}
+			else{
+				cout << "improper barometer step, pressure may be incorrect" << endl;}
+			baro_step++; // increment the step
 
-			// decode GPS status at 100 Hz, no need to do this in the thread, also causes scope problems
-			switch(status_gps){
-				case 0x00:
-					status_gps_string = "no fix";
-					break;
-				case 0x01:
-					status_gps_string = "dead reckoning only";
-					break;
-				case 0x02:
-					status_gps_string = "2D-fix";
-					break;
-				case 0x03:
-					status_gps_string = "3D-fix";
-					break;
-				case 0x04:
-					status_gps_string = "GPS + dead reckoning combined";
-					break;
-				case 0x05:
-					status_gps_string = "Time only fix";
-					break;
-				default:
-					status_gps_string = "Reserved value. Current state unknown";
-					break;
+			//--------------------------------------------------------------------------------------------------------------RC Input Read
+			for(int i = 0 ; i < rcinput.channel_count ; i++ )
+			{
+				rc_array[i] = rcinput.read(i); // read in each value using the private class function (converts to int automatically)
+				if(dbmsg_global || dbmsg_local) {cout << "Channel Number: " << i << " Channel Value: "  << rc_array[i] << endl;}
 			}
-
-			// barometer read placed inside barometer class
-			parachute.baro.update_sensor();
-
-			// all rc reading is accomplished by member function from remote_control class
-			parachute.rc.update();
+			for(int i = 0 ; i < rcinput.channel_count ; i++)
+			{
+				rc_array_scaled[i] = scale_output(coefficients[i],float(rc_array[i]));
+			}
 
 			//-----------------------------------------------------------------------------------------------------------------ADC Update
 			for(int i = 0 ; i < ARRAY_SIZE(adc_array) ; i++){
@@ -917,19 +981,8 @@ while(true)
 			ahrs_lsm_madgwick.getEuler(&roll_lsm_madgwick,&pitch_lsm_madgwick,&yaw_lsm_madgwick);
 
 			//----------------------------------------------------------------------------------------------------------------Controllers
-//			float dt_control = parachute.timer.get_current_time()-parachute.timer.get_timer(3); // dt for this loop
-			dt_control = parachute.timer.get_current_time()-parachute.timer.get_timer(3);
+			float dt_control = time_now-timer[3]; // dt for this loop
 			dt_control = dt_control/1000000.0; // convert from useconds
-			if(abs(dt_control) > 100)
-			{
-				dt_control = 0;
-			}
-//			cout << endl << dt_control << endl;
-
-//			tdata.cmd1 = winch_left_cmd;
-//			tdata.cmd2 = winch_right_cmd;
-
-//			pthread_create(&tid, NULL, actuators, (void *)&tdata);
 
 			// determine what type of heading we are going to used based on the configuration file (or default parameter in the code)
 			switch(heading_type){
@@ -954,9 +1007,9 @@ while(true)
 					heading_type_message = "User " + to_string(user_heading);
 					break;
 				case 'c':
-					yaw_desired = parachute.rc.get_scaled(3); // yaw stick
-					heading_type_message = "RC " + to_string(parachute.rc.get_scaled(3));
-					yaw_desired = parachute.rc.get_scaled(3);
+					yaw_desired = rc_array_scaled[3]; // yaw stick
+					heading_type_message = "RC " + to_string(rc_array_scaled[3]);
+					yaw_desired = rc_array_scaled[3];
 					break;
 				case 's': // Tuesday 8/28 Payload3 heading control steps %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 					heading_type_message = "Step Input (altitude driven)";
@@ -977,7 +1030,6 @@ while(true)
 //						yaw_desired = 90;
 //					} else{
 //						yaw_desired = 0; // set yaw desired here
-
 					break;
 				case 'n':
 					heading_type_message = "Navigation Algorithm";
@@ -1042,8 +1094,6 @@ while(true)
 					yaw_desired = 0;
 					break;}
 
-
-
 			// make yaw continuous instead of +/-180 using a wrap counter
 			if(yaw_mpu_madgwick > WRAP_THRESHOLD && yaw_prev < - WRAP_THRESHOLD){
 				num_wraps--;
@@ -1059,6 +1109,10 @@ while(true)
 			yaw_lsm_madgwick = yaw_lsm_madgwick - DECLINATION;
 
 			continuous_yaw.process_new_input(yaw_mpu_madgwick);
+
+//			cout << "ecrrent: " << yaw_mpu_madgwick << "\teprvious" << yaw_prev << endl;
+
+			cout << continuous_yaw.get_current_continuous() << "\t" << yaw_mpu_madgwick+(360*num_wraps) << "\t\t" << continuous_yaw.get_number_of_wraps() << "\t" << num_wraps << endl;
 
 			if((yaw_l_desired_prev - yaw_l_desired) > max_degrees_per_sample)
 			{
@@ -1079,9 +1133,9 @@ while(true)
 			yaw_error_sum         = (((yaw_error + yaw_error_previous)*dt_control)/2) + yaw_error_sum;
 
 			// yaw error for rate limited control
-			yaw_l_prev	     	 = yaw_mpu_madgwick;
+			yaw_l_prev	     = yaw_mpu_madgwick;
 			yaw_l_error_previous = yaw_l_error;
-			yaw_l_error	     	 = yaw_l_desired - (yaw_mpu_madgwick+(360*num_wraps));
+			yaw_l_error	     = yaw_l_desired - (yaw_mpu_madgwick+(360*num_wraps));
 			yaw_l_error_rate     = (yaw_l_error - yaw_l_error_previous)/dt_control;
 			yaw_l_error_sum	     = (((yaw_l_error + yaw_l_error_previous)*dt_control)/2) + yaw_l_error_sum;
 
@@ -1100,72 +1154,28 @@ while(true)
 			}
 
 			// hack to avoid changing the variable name "t" in the multisine
-			float t = parachute.timer.get_current_time()*1e-6;
+			float t = time_now*1e-6;
 
 			// gains are modified live according to rc transmitter stick positions
-			if(live_gains)
-			{
-				kp    =  (kp_start+parachute.rc.get_scaled(2))*(.0175);
-				ki    =  (ki_start+parachute.rc.get_scaled(3))*(.0175);
-				kd    =  (kd_start+parachute.rc.get_scaled(0))*(.0175);
-				// wn    =  wn_start+rc_array_scaled[2];
-				// zeta  =  zeta_start+rc_array_scaled[1];
-				// ki_ndi = ki_ndi_start+rc_array_scaled[3];
-			}
-			else
-			{
+			if(live_gains){
+				kp    =  (kp_start+rc_array_scaled[2])*(.0175);
+				ki    =  (ki_start+rc_array_scaled[3])*(.0175);
+				kd    =  (kd_start+rc_array_scaled[0])*(.0175);
+				wn    =  wn_start+rc_array_scaled[2];
+				zeta  =  zeta_start+rc_array_scaled[1];
+				ki_ndi = ki_ndi_start+rc_array_scaled[3];}
+			else{
 				kp = kp_start*.0175;
 				ki = ki_start*.0175;
 				kd = kd_start*.0175;
-				// wn = wn_start;
-				// zeta = zeta_start;
-				// ki_ndi = ki_ndi_start;
-			}
+				wn = wn_start;
+				zeta = zeta_start;
+				ki_ndi = ki_ndi_start;}
+
 			// control type is determined by configuration parameter from file (or default in code)
 			switch(control_type){
-				case 'a':
-					control_type_message = "Adaptive (MRAC) Rate Control";
-
-//					cout << endl << dt_control << endl;
-
-					// outer loop error
-					error_outer_loop = yaw_desired - continuous_yaw.get_current_continuous();
-					error_sum_outer_loop = error_sum_outer_loop + error_outer_loop * dt_control;
-
-					// outer loop controller
-					yaw_rate_desired = kp_outer_loop * error_outer_loop + ki_outer_loop * error_sum_outer_loop;
-
-					// pass desired yaw through the model
-					yaw_rate_model = reference_model.filter_new_input(yaw_rate_desired);
-
-					//MRAC control law
-					cmd_adapt = p1*yaw_rate_desired + p2;
-
-					// error for adaptation
-					error_model = g_mpu[2]*57.3 - yaw_rate_model;
-
-					// derivative of gains
-					p1_d = -l1*yaw_rate_desired*error_model;
-					p2_d = -l2*error_model;
-
-					// adapt the gains
-					p1 = p1 + p1_d * dt_control;
-					p2 = p2 + p2_d * dt_control;
-
-//					cout << endl;
-//					cout << "p1 = " << p1 << "\tp2 = " << p2 << endl;
-//					cout << "p1_d*dt_control = " << p1_d*dt_control << "\tp2_d*dt_control = " << p2_d*dt_control << endl;
-
-					cmd_adapt = cmd_adapt/10000;
-
-					winch_left_cmd = LINE_NEUTRAL + cmd_adapt;
-//					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
-					winch_right_cmd = LINE_NEUTRAL + LINE_OFFSET;
-//					winch_right_cmd = LINE_NEUTRAL + cmd_adapt;
-
-					break;
 				case 'f': // Frequency Sweep successfully bench tested 9/21/18
-					control_type_message = "Frequency Sweep";
+					control_type_message = "Frequency Sweep"; 
 					 phi = wmin*time_sweep + c2*(wmax - wmin)*((total_time/c1)*exp(c1*time_sweep/total_time) - time_sweep);
 					if (time_sweep <= total_time){
 					time_sweep = time_sweep + 0.01;}
@@ -1173,14 +1183,14 @@ while(true)
 						winch_left_cmd = 0;
 						winch_right_cmd = 0;}
 
-					winch_left_cmd = LINE_NEUTRAL + sweep_amp*sin(phi);
+					winch_left_cmd  = LINE_NEUTRAL + sweep_amp*sin(phi);
 					winch_right_cmd = LINE_NEUTRAL + sweep_amp*sin(phi);
 					break;
 
 				//----------------------------------------------------------
 				case 'j': // *********** Multi Step ****** successfully bench tested 9/21/18
 					control_type_message = "Multistep";
-							multi_time = round((parachute.timer.get_current_time() - multi_time_offset)/1e6); // make it start at exactly zero
+							multi_time = round((time_now - multi_time_offset)/1e6); // make it start at exactly zero
 							prev_pulse_train = pulse_train;
 							pulse_train = ((fmod(multi_time , (period/2))) == 0);
 							b1 = (pulse_train == 1 && prev_pulse_train == 0);
@@ -1196,7 +1206,7 @@ while(true)
 									  N = -num_steps;}
 									}}
 
-						winch_left_cmd = LINE_NEUTRAL + step_size*N*state;
+						winch_left_cmd  = LINE_NEUTRAL + step_size*N*state;
 						winch_right_cmd = LINE_NEUTRAL + step_size*N*state;
 						break;
 				case 'p':
@@ -1206,7 +1216,12 @@ while(true)
 						winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
 					} else {
 						winch_left_cmd = LINE_NEUTRAL + (kp*yaw_error + ki*yaw_error_sum + kd*yaw_error_rate);
-						winch_right_cmd = LINE_NEUTRAL + LINE_OFFSET;}
+						winch_right_cmd = LINE_NEUTRAL - LINE_OFFSET;}
+					break;
+				case 'n':
+					control_type_message = "NDI";
+					winch_right_cmd = LINE_NEUTRAL - (1/B)*(-2*zeta*wn*g_mpu[2]-A*g_mpu[2]+wn*wn*(yaw_desired-(yaw_mpu_madgwick+360*num_wraps))*.0175)-(C/B)+ki_ndi*yaw_error_sum;
+					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
 					break;
 				case 'r': // minimum deflection, for rigging
 					control_type_message = "minimum deflection";
@@ -1220,21 +1235,30 @@ while(true)
 					break;
 				case 's': // input sweep
 					control_type_message = "input sweep";
-					// now using maneuver_generator for this mode
-					winch_right_cmd = LINE_NEUTRAL + out;
-					winch_left_cmd = LINE_NEUTRAL + out;
+					if(rc_array[4] > 1500){
+						if(step_counter >= 0){
+							winch_right_cmd = LINE_NEUTRAL+INITIAL_DEFLECTION - step_counter*STEP_SIZE;}
+						else{
+							winch_right_cmd = LINE_NEUTRAL;}
+						winch_left_cmd = LINE_NEUTRAL+LINE_OFFSET;
+					} else{
+						if(step_counter>=0){
+							winch_left_cmd = LINE_NEUTRAL-INITIAL_DEFLECTION + step_counter*STEP_SIZE;}
+						else{
+							winch_left_cmd = LINE_NEUTRAL;}
+						winch_right_cmd = LINE_NEUTRAL-LINE_OFFSET;}
 					break;
 				case 'c': // rc control
 					control_type_message = "RC control";
 					//for RC control, throttle is left servo, elevator is right servo, down on the sticks is line pull
-					winch_right_cmd = LINE_NEUTRAL + parachute.rc.get_scaled(2);
-					//winch_left_cmd = LINE_NEUTRAL - parachute.rc.get_scaled(2);
+					winch_right_cmd = LINE_NEUTRAL + rc_array_scaled[2];
+					//winch_left_cmd = LINE_NEUTRAL - rc_array_scaled[2];
 					winch_left_cmd = LINE_NEUTRAL + LINE_OFFSET;
 					break;
 				case 'm': // multisine
 					control_type_message = "Multisine";
 					// multisine or step input, only enable when switch D is in the 1 or 2 position
-					if(parachute.rc.get_raw(4) > 1500) // switch A 0 for left, 1 for right
+					if(rc_array[4] > 1500) // switch A 0 for left, 1 for right
 					{
 						if(multisine_counter < 61){
 							// right winch is dynamic, left winch is static
@@ -1286,18 +1310,16 @@ while(true)
 			else if(winch_left_cmd < LINE_NEUTRAL - DEFLECTION_LIMIT){
 				winch_left_cmd = LINE_NEUTRAL - DEFLECTION_LIMIT;}
 
-//			cout << "cmd1: " << tdata.cmd1 << " enc1: " << tdata.enc1 << endl;
-//			cout << "cmd2: " << tdata.cmd2 << " enc2: " << tdata.enc2 << endl;
+			// always write the duty cycle, change control type by changing the switch case parameter
+			pwm_out.set_duty_cycle(WINCH_RIGHT, winch_right_cmd);
+			pwm_out.set_duty_cycle(WINCH_LEFT, winch_left_cmd);
 
 			//-------------------------------------------------------------------------------------------------------Data Log File Output
-			fout << today << "," << parachute.timer.get_current_time() << "," << msl << ",";
-
-			for(int i = 0 ; i < NUM_CHANNELS ; i++){
-				fout << parachute.rc.get_raw(i) << ",";}
-			for(int i = 0 ; i < NUM_CHANNELS ; i++){
-				fout << parachute.rc.get_scaled(i) << ",";}
-			for(int i = 0 ; i < ARRAY_SIZE(adc_array) ; i++){
-				fout << adc_array[i] << ",";}
+			fout << today << "," << time_now << "," << msl << ",";
+			for(int i = 0 ; i < rcinput.channel_count ; i++){
+				fout << rc_array[i] << ",";}
+			for(int i = 0 ; i < rcinput.channel_count ; i++){
+				fout << rc_array_scaled[i] << ",";}
 			fout << roll_mpu_mahony << "," << pitch_mpu_mahony << "," << yaw_mpu_mahony << ",";
 			fout << roll_lsm_mahony << "," << pitch_lsm_mahony << "," << yaw_lsm_mahony << ",";
 			fout << roll_mpu_madgwick << "," << pitch_mpu_madgwick << "," << yaw_mpu_madgwick << ",";
@@ -1305,70 +1327,90 @@ while(true)
 			fout << a_mpu[0] << "," << a_mpu[1] << "," << a_mpu[2] << "," << a_lsm[0] << "," << a_lsm[1] << ",";
 			fout << a_lsm[2] << "," << g_mpu[0] << "," << g_mpu[1] << "," << g_mpu[2] << "," << g_lsm[0] << "," << g_lsm[1] << ",";
 			fout << g_lsm[2] << "," << m_mpu[0] << "," << m_mpu[1] << "," << m_mpu[2] << "," << m_lsm[0] << "," << m_lsm[1] << "," << m_lsm[2] << ",";
-			fout << winch_right_cmd.load(memory_order_relaxed) << "," << winch_left_cmd.load(memory_order_relaxed) << ","  ;
-			fout << kp << "," << ki << "," << kd << ",";
-			fout << yaw_desired << "," <<  yaw_error << "," << yaw_error_previous << "," << yaw_error_rate << "," << yaw_error_sum << ",";
-			fout << control_type << "," << heading_type << ",";
-
-//			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << "," << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << "," << status_gps_string << ",";
-			fout << setprecision(9) << time_gps.load(memory_order_relaxed) << "," << lat.load(memory_order_relaxed) << "," << lng.load(memory_order_relaxed) << "," << alt_ellipsoid.load(memory_order_relaxed) << "," << msl_gps.load(memory_order_relaxed) << "," << horz_accuracy.load(memory_order_relaxed) << "," << vert_accuracy.load(memory_order_relaxed) << "," << status_gps.load(memory_order_relaxed) << "," << status_gps_string << ",";
-
+			fout << winch_right_cmd << "," << winch_left_cmd << ","  << yaw_mpu_integrated_degrees << ",";
+			fout << yaw_lsm_integrated_degrees << "," << A << "," << B << "," << C << ",";
+			fout << wn << "," << zeta << "," << kp << "," << ki << "," << kd << ",";
+			fout << yaw_desired << "," <<  yaw_error << "," << yaw_error_previous << "," << yaw_error_rate << ",";
+			fout << yaw_error_sum << "," << adc_array[5] << "," << control_type << "," << heading_type << ",";
+			fout << setprecision(9) << time_gps << "," << lat << "," << lng << "," << alt_ellipsoid << ",";
+			fout << msl_gps << "," << horz_accuracy << "," << vert_accuracy << "," << status_gps << ",";
 			fout << waypoints[wind_level_index][0] << "," << waypoints[wind_level_index][1] << ",";
-			fout << yaw_l_desired << "," <<  yaw_l_error << "," << yaw_l_error_previous << "," << yaw_l_error_rate << "," << yaw_l_error_sum << ",";
+			fout << yaw_l_desired << "," <<  yaw_l_error << "," << yaw_l_error_previous << "," << yaw_l_error_rate << ",";
+			fout << yaw_l_error_sum << "," << adc_array[0] << "," << adc_array[1] << "," << adc_array[2] << "," << adc_array[3] << "," << adc_array[4] << "," << adc_array[5] << ",";
+			fout << continuous_yaw.get_current_continuous() << "," << continuous_yaw.get_number_of_wraps() << "," << yaw_mpu_madgwick << "," << num_wraps << endl;;
 
-			fout << l1 << "," << l2 << "," << kp_outer_loop << "," << ki_outer_loop << "," << error_outer_loop << ",";
-			fout << error_sum_outer_loop << "," << yaw_rate_desired << "," << yaw_rate_model << "," << cmd_adapt << ",";
-			fout << error_model << "," << p1 << "," << p2 << "," << p1_d << "," << p2_d; // << "," << enci1 << "," << enci2;
+/*			// Serial Output to help with payload recovery
+			if((int(time_gps) % 4) ==  0){
+				serialPrintf(serialHandle, "--Payload 4--\nGPS Position:\n");
+				serialPrintf(serialHandle, to_string(lat).c_str());
+				serialPrintf(serialHandle, "(deg), ");
+				serialPrintf(serialHandle, to_string(lng).c_str());
+				serialPrintf(serialHandle, "(deg)\nAltitude: ");
+				serialPrintf(serialHandle, to_string(msl_gps).c_str());
+				serialPrintf(serialHandle, "(ft)\n\n");
+			}
+*/
 
-			fout << endl;
-
-			parachute.timer.update_watcher(3); // used to check loop frequency
-			parachute.timer.update_timer(3);
+			watcher[3] = time_now - timer[3]; // used to check loop frequency
+			timer[3] = time_now;
 		}
 
-		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(4)) > parachute.timer.get_duration(4))
+		if( (time_now-timer[4]) > duration[4])
 		{
+			//-------------------------------------------------------------------------------------------------------------Barometer Calc
+			// barometer does full update at 25Hz, no need to do the full altitude calculation any faster than 50Hz
+			Tc  = barometer.getTemperature(); // temperature from sensor (C), value is recorded at surface of PCB, (higher than ambient!)
+			Tk  = Tc + 273.15; // convert to Kelvin (needed for barometric formula
+			Tf  = Tc * (9.0/5.0) + 32; // convert to Fahrenheit (uncomment for sanity check but it is not used for any calcs)
+			Pm  = barometer.getPressure(); // pressure is natively given in mbar
+			Phg = Pm*.02953; // convert to inHg
+			// barometric equation
+			msl = hb + (Tb/Lb)*(pow((Phg/Pb),((-R*Lb)/(g0*M)))-1); // NOTE: using local Tk instead of standard temperature (Tb)
 
-			// barometer calculation is now performed in member function
-			msl = parachute.baro.get_msl();
+			if( dbmsg_global || dbmsg_local) {cout << "Barometer Check (at 50Hz), Temp (C,K,F): " << Tc << " " << Tk << " " << Tf << " "
+				<< "Pressure (mbar, inHg): " << Pm << " " << Phg << " Altitude MSL (ft): " << msl << endl;}
 
-			parachute.timer.update_watcher(4); // used to check loop frequency
-			parachute.timer.update_timer(4);
+			watcher[4] = time_now - timer[4]; // used to check loop frequency
+			timer[4] = time_now;
 		}
 
 
-		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(5)) > parachute.timer.get_duration(5)){
-			// unused timer() loop
-			parachute.timer.update_watcher(5); // used to check loop frequency
-			parachute.timer.update_timer(5);}
+		if( (time_now-timer[5]) > duration[5]){
+			// unused timer loop
+			watcher[5] = time_now - timer[5]; // used to check loop frequency
+			timer[5] = time_now;}
 
-		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(6)) > parachute.timer.get_duration(6)){
-			// unused timer() loop
-			parachute.timer.update_watcher(6); // used to check loop frequency
-			parachute.timer.update_timer(6);}
+		if( (time_now-timer[6]) > duration[6]){
+			// unused timer loop
+			watcher[6] = time_now - timer[6]; // used to check loop frequency
+			timer[6] = time_now;}
 
-		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(7)) > parachute.timer.get_duration(7)){
+		if( (time_now-timer[7]) > duration[7]){
 
-			parachute.timer.update_watcher(7); // used to check loop frequency
-			parachute.timer.update_timer(7);}
+			// this step counter is used for input sweeps (originally "step" inputs)
+			step_counter++;
+			if(step_counter>NUM_STEPS-1){
+				step_counter = 0;}
+			watcher[7] = time_now - timer[7]; // used to check loop frequency
+			timer[7] = time_now;}
 
-		if( (parachute.timer.get_current_time()-parachute.timer.get_timer(8)) > parachute.timer.get_duration(8)){
+		if( (time_now-timer[8]) > duration[8]){
 			//Output Message
-			//if(dbmsg_global || dbmsg_local){
-			if(!dbmsg_global && !dbmsg_local){
+			if(dbmsg_global || dbmsg_local){
+			//if(!dbmsg_global && !dbmsg_local){
 				cout << endl;
 				cout << "Current filename: " << filename_str << endl;
 				cout << "Barometer Altitude: " << msl << " ft" << endl;
 				cout << "Raw RC Input:";
-				for(int i = 0 ; i < NUM_CHANNELS ; i++ ){
-					cout << " channel " << i << ": " << parachute.rc.get_raw(i);
-					if(i != NUM_CHANNELS -1){
+				for(int i = 0 ; i < rcinput.channel_count ; i++ ){
+					cout << " channel " << i << ": " << rc_array[i];
+					if(i != rcinput.channel_count -1){
 						cout << ",";}}
 				cout << endl;
 				cout << "Scaled RC Input:";
-				for(int i = 0 ; i < NUM_CHANNELS ; i++ ){
-					cout << " channel " << i << ": " << parachute.rc.get_scaled(i);
-					if(i != NUM_CHANNELS -1){
+				for(int i = 0 ; i < rcinput.channel_count ; i++ ){
+					cout << " channel " << i << ": " << rc_array_scaled[i];
+					if(i != rcinput.channel_count -1){
 						cout << ",";}}
 				cout << endl;
 				cout << "MPU9250: ";
@@ -1397,49 +1439,51 @@ while(true)
 				cout << "Euler Angles (Madgwick): " << "(dt = " << dt << ")" << endl;
 				cout << "MPU9250: Roll: " << roll_mpu_madgwick << " Pitch: " << pitch_mpu_madgwick << " Yaw: " << yaw_mpu_madgwick << endl;
 				cout << "LSM9DS1: Roll: " << roll_lsm_madgwick << " Pitch: " << pitch_lsm_madgwick << " Yaw: " << yaw_lsm_madgwick << endl;
+				cout << "Integrated Yaw (fallback):" << " MPU9250 Yaw: " << yaw_mpu_integrated_degrees << " LSM9DS1 Yaw: " << yaw_lsm_integrated_degrees << endl;
 
-				cout << "Right Winch: " << winch_right_cmd << " Left Winch: " << winch_left_cmd << endl;
+				cout << "Right Winch: " << winch_right_cmd << " Left Winch: " << winch_left_cmd << " Servo Current: " << (adc_array[5]-2500)/66 << endl;
 
 				cout << "Control Type: " << control_type_message << endl;
 
-				cout << " PID" << endl << "kp: " << kp << " ki: " << ki << " kd: " << kd << endl;
+				cout << "System ID, A: " << A << " B: " << B << " C: " << C;
+				cout << " NDI, wn: " << wn << " zeta: " << zeta << " ki_ndi: " << ki_ndi;
+				cout << " PID, kp: " << kp << " ki: " << ki << " kd: " << kd << endl;
 				cout << "Heading type: " << heading_type_message << endl;
 				cout << "Yaw Desired: " << yaw_desired << " Yaw Error: " << yaw_error << " Yaw Error Rate: " << yaw_error_rate << " Yaw Error Sum: " << yaw_error_sum << endl;
-				cout << "Proportional: " <<  kp*yaw_error << " Integral: " << ki*yaw_error_sum << " Derivative: " << kd*yaw_error_rate << endl;
-				cout << "Number of wraps: " << num_wraps << endl;
+				cout << "Proportional: " <<  kp*yaw_error << " integral: " << ki*yaw_error_sum << " derivative: " << kd*yaw_error_rate << endl;
+				cout << "Number of wraps: " << num_wraps;
+				cout << " Step counter: " << step_counter << endl << endl;
+				multisine_counter++;
 
 				cout << "Yaw Limited Desired: " << yaw_l_desired << endl << endl;
 
-
 				}
+
+//			cout << tse << " - " << time_start << " = " << time_now << endl;
 
 //dbmsg_local = true;
 			if(dbmsg_global || dbmsg_local){
 				// Alternate debug message, just print out the most current duration for each loop occasionally
 				cout << "Printing the most current expected vs. actual time since last execution for each loop" << endl;
 				for(int i = 0 ; i < NUM_LOOPS ; i++){
-					cout << "For " << parachute.timer.get_frequency(i) << "(Hz) loop, expected: " << parachute.timer.get_duration(i) << "(us), actual: " << parachute.timer.get_watcher(i) << endl;}}
+					cout << "For " << frequency[i] << "(Hz) loop, expected: " << duration[i] << "(us), actual: " << watcher[i] << endl;}}
 //dbmsg_local = false;
 
 			// Serial Output to help with payload recovery
-			//if(((int(time_gps)-2) % 10) ==  0){
-				//cout << "Blasting serial" << endl;
-				//serialPrintf(serialHandle, "--Payload 2--\nGPS Position:\n");
-				//serialPrintf(serialHandle, to_string(lat).c_str());
-				//serialPrintf(serialHandle, "(deg), ");
-				//serialPrintf(serialHandle, to_string(lng).c_str());
-				//serialPrintf(serialHandle, "(deg)\nAltitude: ");
-				//serialPrintf(serialHandle, to_string(msl_gps).c_str());
-				//serialPrintf(serialHandle, "(ft)\n\n");
-			//}
+			if(((int(time_gps)-3) % 10) ==  0){
+				serialPrintf(serialHandle, "--Payload 3--\nGPS Position:\n");
+				serialPrintf(serialHandle, to_string(lat).c_str());
+				serialPrintf(serialHandle, "(deg), ");
+				serialPrintf(serialHandle, to_string(lng).c_str());
+				serialPrintf(serialHandle, "(deg)\nAltitude: ");
+				serialPrintf(serialHandle, to_string(msl_gps).c_str());
+				serialPrintf(serialHandle, "(ft)\n\n");
+			}
 
 
-			parachute.timer.update_watcher(8); // used to check loop frequency
-			parachute.timer.update_timer(8);
+			watcher[8] = time_now - timer[8]; // used to check loop frequency
+			timer[8] = time_now;
 		}
-
-		usleep(10);
-//		cout << "this is executing" << endl;
 
 	}
 

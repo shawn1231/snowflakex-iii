@@ -1,98 +1,107 @@
-/*
-Provided to you by Emlid Ltd (c) 2015.
-twitter.com/emlidtech || www.emlid.com || info@emlid.com
-
-Example: Control servos connected to PWM driver onboard of Navio2 shield for Raspberry Pi.
-
-Connect servo to Navio2's rc output and watch it work.
-PWM_OUTPUT = 0 complies to channel number 1, 1 to channel number 2 and so on.
-To use full range of your servo correct SERVO_MIN and SERVO_MAX according to it's specification.
-
-To run this example navigate to the directory containing it and run following commands:
-make
-sudo ./Servo
-*/
-
 #include <unistd.h>
 #include "Navio/PWM.h"
 #include "Navio/Util.h"
 
-//#define PWM_OUTPUT_EAST 1
-//#define PWM_OUTPUT_WEST 0
-//#define SERVO_MIN 0.800 /*mS*/
-//#define SERVO_MAX 2.200 /*mS*/
-//#define MAX_LINE_RELEASE 0.800
-//#define MIN_LINE_RELEASE 2.200
+#include <iostream>
+#include <cstdlib>
+#include <pthread.h>
+#include <unistd.h>
+#include <chrono>
+#include <atomic>
+//#include <mutex>
 
-#define WINCH_EAST 1 // winch servo on east side (in body NED frame) (right hand side if facing forward)
-#define WINCH_WEST 0 // winch servo on west side (in body NED frame) (left hand side if facing forward)
-#define SPEAKER 13
-#define MAX_DEFLECTION  0.500
-//#define LINE_LENGTH_MIN -0.500
-#define LINE_NEUTRAL 1.500
-float winch_command;
+using namespace std;
+using namespace std::chrono;
+
+#define NUM_THREADS 5
+
+int shared_var = 0;
+
+atomic<float> atomic_shared;
+
+auto start = high_resolution_clock::now();
+
+auto stop  = high_resolution_clock::now();
+
+auto duration = duration_cast<microseconds>(stop - start);
+
+//void *PrintHello(void *threadid)
+void *PrintHello(void *)
+{
+	while(true)
+	{
+		usleep(.01*100000);
+		atomic_shared.store(1, memory_order_relaxed);
+//		cout << "thread firing" << endl;
+	}
+
+	pthread_exit(NULL);
+
+}
 
 int main()
 {
-    PWM pwm_out;
-//    if (!pwm1.init(PWM_OUTPUT_EAST) && !pwm1.init(PWM_OUTPUT_WEST)) {
-//        fprintf(stderr, "Output Enable not set. Are you root?\n");
-//        return 0;
-//    }
-//    pwm_out.init(WINCH_EAST); // initialize the west winch servo
-//    pwm_out.init(WINCH_WEST); // initialize the east winch servo
-    pwm_out.init(SPEAKER);
-//    pwm_out.enable(WINCH_EAST); // prepare west winch servo to receive input
-//    pwm_out.enable(WINCH_WEST); // prepare east winch servo to receive input
-    pwm_out.enable(SPEAKER);
-//    pwm_out.set_period(WINCH_EAST , 50); // set period to 50 ms
-//    pwm_out.set_period(WINCH_WEST , 50); // set period to 50 ms
-    pwm_out.set_period(SPEAKER , 1000);
-//    pwm1.init(PWM_OUTPUT_EAST);
-//    pwm1.init(PWM_OUTPUT_WEST);
-//    pwm1.enable(PWM_OUTPUT_EAST);
-//    pwm1.enable(PWM_OUTPUT_WEST);
-//    pwm1.set_period(PWM_OUTPUT_EAST, 50);
-//    pwm1.set_period(PWM_OUTPUT_WEST, 50);
-    sleep(1);
 
-    while (true) {
+	pthread_t threads[1];
 
-//	pwm_out.set_duty_cycle(WINCH_EAST , LINE_NEUTRAL - MAX_DEFLECTION);
-//	pwm_out.set_period(SPEAKER , 1000);
-//	sleep(1);
-	pwm_out.set_duty_cycle(SPEAKER , 5);
-//	fprintf(stderr , "East line min\n");
-//	sleep(1);
-//	pwm_out.set_duty_cycle(WINCH_EAST , LINE_NEUTRAL + MAX_DEFLECTION);
-//	pwm_out.set_period(SPEAKER , 2000);
-//	fprintf(stderr , "East line max\n");
-//	sleep(1);
-//	pwm_out.set_duty_cycle(WINCH_WEST , LINE_NEUTRAL + MAX_DEFLECTION);
-//	pwm_out.set_period(SPEAKER , 2000);
-//	fprintf(stderr , "West line min\n");
-//	sleep(1);
-//	pwm_out.set_duty_cycle(WINCH_WEST , LINE_NEUTRAL - MAX_DEFLECTION);
-//	pwm_out.set_period(SPEAKER , 200);
-//	fprintf(stderr , "West line max\n");
-	sleep(1);
+	int thr = pthread_create(&threads[1], NULL, PrintHello, NULL);
 
+	if (thr)
+	{
+		cout << "Error:unable to create thread," << thr << endl;
+		exit(-1);
+	}
 
+	while(1)
+	{
 
+		auto start = high_resolution_clock::now();
 
-//        pwm1.set_duty_cycle(PWM_OUTPUT_EAST, MAX_LINE_RELEASE);
-//	fprintf(stderr, "East winch at max line release\n");
-//	sleep(10);
-//	pwm1.set_duty_cycle(PWM_OUTPUT_EAST, MIN_LINE_RELEASE);
-//	fprintf(stderr, "East winch at min line release\n");
-//        sleep(10);
-//        pwm1.set_duty_cycle(PWM_OUTPUT_WEST, MAX_LINE_RELEASE);
-//	fprintf(stderr, "West winch at max line release\n");
-//	sleep(10);
-//	pwm1.set_duty_cycle(PWM_OUTPUT_EAST, MIN_LINE_RELEASE);
-//	fprintf(stderr, "West winch at min line release\n");
-//        sleep(10);
-    }
+		atomic_shared.store(2, memory_order_seq_cst);
 
-    return 0;
+		usleep(.001*100000);
+
+		cout << "atomic_shared: " << atomic_shared.load(memory_order_relaxed) << endl;
+
+		auto stop = high_resolution_clock::now();
+
+		auto duration = duration_cast<microseconds>(stop - start);
+
+		cout << "duration: " << duration.count() << endl;
+
+//		cout << "main loop firing" << endl;
+
+	}
+
 }
+
+/*
+void *PrintHello(void *threadid)
+{
+	long tid;
+	tid = (long)threadid;
+	cout << "Hello World! Thread ID, " << tid << endl;
+	pthread_exit(NULL);
+}
+
+int main ()
+{
+	pthread_t threads[NUM_THREADS];
+	int rc;
+	int i;
+
+	for( i = 0; i < NUM_THREADS; i++ )
+	{
+		cout << "main() : creating thread, " << i << endl;
+		rc = pthread_create(&threads[i], NULL, PrintHello, (void *)i);
+
+		if (rc)
+		{
+			cout << "Error:unable to create thread," << rc << endl;
+			exit(-1);
+      		}
+	}
+	pthread_exit(NULL);
+}
+*/
+

@@ -14,11 +14,11 @@ class scheduler
 		unsigned long long tse;
 		unsigned long long time_start;
 		unsigned long long time_now;
-		const float frequency [NUM_LOOPS] = {300,1000,5,100,50,20,10,.1,1};//Hz
+		const float frequency [NUM_LOOPS] = {50,1000,5,50,50,20,10,.1,1};//Hz
 		unsigned long long duration [NUM_LOOPS]; // stores the expected time since last execution for a given loop
 		unsigned long long timer [NUM_LOOPS]; // stores the time since the last execution in a given loop
 		unsigned long long watcher [NUM_LOOPS]; // used for monitoring actual timer loop durations
-		
+
 	public:
 		scheduler();
 		void update_time();

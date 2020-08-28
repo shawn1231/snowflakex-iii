@@ -1,3 +1,4 @@
+clear
 /*
 Provided to you by Emlid Ltd (c) 2015.
 twitter.com/emlidtech || www.emlid.com || info@emlid.com
